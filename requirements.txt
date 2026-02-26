@@ -1,0 +1,4 @@
+openai>=1.30.0
+python-dotenv>=1.0.0
+azure-identity>=1.15.0     # DefaultAzureCredential for managed identity auth
+azure-ai-projects>=1.0.0   # Azure AI Foundry Projects SDK (agent management)
