@@ -2,10 +2,12 @@
 GET /api/v1/jira/projects
 
 Proxies a credential check against Jira and returns the list of projects
-the caller has access to.  Credentials are passed as query parameters so
-the frontend can call this without a backend session store.
+the caller has access to.  Credentials are passed as optional query parameters;
+when omitted the server falls back to the JIRA_EMAIL / JIRA_API_TOKEN
+environment variables (server service account).
 
 Endpoint:
+    GET /api/v1/jira/projects?base_url=https://org.atlassian.net
     GET /api/v1/jira/projects?base_url=https://org.atlassian.net&email=you@org&token=...
 
 Returns:
@@ -23,6 +25,7 @@ code — the caller cannot influence it.  The response body is never forwarded
 verbatim; only extracted project keys and names are returned.
 """
 
+import os
 import requests
 from requests.auth import HTTPBasicAuth
 from urllib.parse import urlparse
@@ -80,12 +83,16 @@ def _validate_base_url(raw: str) -> str:
 
 @router.get("/jira/projects")
 async def get_jira_projects(
-    base_url: str = Query(..., description="Jira base URL, e.g. https://org.atlassian.net"),
-    email:    str = Query(..., description="Atlassian account email"),
-    token:    str = Query(..., description="Jira API token"),
+    base_url: str       = Query(...,  description="Jira base URL, e.g. https://org.atlassian.net"),
+    email:    str | None = Query(None, description="Atlassian account email (falls back to JIRA_EMAIL env var)"),
+    token:    str | None = Query(None, description="Jira API token (falls back to JIRA_API_TOKEN env var)"),
 ):
     """
     Return Jira projects the caller has BROWSE_PROJECTS permission on.
+
+    When email / token are not provided (or empty), the server falls back to
+    the JIRA_EMAIL and JIRA_API_TOKEN environment variables so the frontend
+    does not need to collect user credentials.
 
     Uses the Jira Cloud REST API v3 project/search endpoint.  Paginates
     through all results (max 50 per page) so large instances are fully
@@ -94,11 +101,24 @@ async def get_jira_projects(
     # -- SSRF guard: validate before any outbound call ---------------------
     base = _validate_base_url(base_url)
 
+    # Resolve credentials: prefer caller-supplied values, fall back to env vars
+    resolved_email = (email or "").strip() or os.environ.get("JIRA_EMAIL", "")
+    resolved_token = (token or "").strip() or os.environ.get("JIRA_API_TOKEN", "")
+
+    if not resolved_email or not resolved_token:
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "No Jira credentials available.  "
+                "Set JIRA_EMAIL and JIRA_API_TOKEN in the server environment."
+            ),
+        )
+
     # The full URL is assembled here from a trusted base and a fixed path.
     # No caller-supplied data appears in the path or query string.
     jira_search_url = f"{base}/rest/api/3/project/search"
 
-    auth    = HTTPBasicAuth(email, token)
+    auth    = HTTPBasicAuth(resolved_email, resolved_token)
     headers = {"Accept": "application/json"}
 
     projects: list[dict] = []
