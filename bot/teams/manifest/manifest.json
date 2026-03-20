@@ -1,0 +1,76 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.16/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.16",
+  "version": "1.0.0",
+  "id": "CHANGE_ME",
+  "packageName": "com.dcri.sagejirabot",
+  "developer": {
+    "name": "DCRI SAGE Team",
+    "websiteUrl": "https://dcri.duke.edu",
+    "privacyUrl": "https://dcri.duke.edu/privacy",
+    "termsOfUseUrl": "https://dcri.duke.edu/terms"
+  },
+  "name": {
+    "short": "SageJiraBot",
+    "full": "SageJiraBot — Meeting to Jira Tickets"
+  },
+  "description": {
+    "short": "Turn meeting transcripts into Jira tickets",
+    "full": "SageJiraBot uses AI to extract action items from meeting transcripts and create structured Jira tickets with your review and approval. All LLM calls go to Azure AI Foundry (ai-foundry-dcri-sage). Data stays inside the Duke Health Azure tenant."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#012169",
+  "bots": [
+    {
+      "botId": "CHANGE_ME",
+      "scopes": ["team", "groupChat", "personal"],
+      "supportsFiles": false,
+      "isNotificationOnly": false,
+      "commandLists": [
+        {
+          "scopes": ["team", "groupChat"],
+          "commands": [
+            {
+              "title": "process",
+              "description": "Process latest meeting transcript into Jira tickets"
+            },
+            {
+              "title": "paste",
+              "description": "Paste a transcript (Teams VTT, Webex TXT, or plain text)"
+            },
+            {
+              "title": "status",
+              "description": "Show current session status"
+            },
+            {
+              "title": "cancel",
+              "description": "Cancel the current session and discard drafts"
+            },
+            {
+              "title": "help",
+              "description": "Show all available commands"
+            }
+          ]
+        },
+        {
+          "scopes": ["personal"],
+          "commands": [
+            {
+              "title": "help",
+              "description": "Show all available commands"
+            },
+            {
+              "title": "paste",
+              "description": "Paste a transcript for processing"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "permissions": ["identity", "messageTeamMembers"],
+  "validDomains": ["CHANGE_ME"]
+}
