@@ -22,9 +22,10 @@ permissions — all narrowly scoped — would eliminate that friction.
 | `Contributor` | `rg-dcri-prod-sage` only (new, isolated RG — zero cost) | Deploy Container Apps, Storage Accounts, Container Registries |
 | `User Access Administrator` | `ai-foundry-dcri-sage` only | Grant managed identity auth to deployed apps (no stored credentials) |
 
-The dedicated resource group pattern (item 2) is Microsoft's recommended approach for
-developer sandbox environments per the Azure Cloud Adoption Framework:
-https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/considerations/sandbox-environments
+Granting Contributor at the resource group scope (rather than subscription) is
+Microsoft's recommended approach for limiting developer access — see "Grant access at the
+resource group scope" in Azure RBAC best practices:
+https://learn.microsoft.com/en-us/azure/role-based-access-control/best-practices#limit-the-number-of-subscription-owners
 
 **One question:** Is `Application Developer` assigned directly or via PIM?
 
