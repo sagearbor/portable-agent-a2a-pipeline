@@ -7,6 +7,9 @@ Run with:
 Endpoints:
     GET  /health                          - health check (liveness probe)
     POST /api/v1/process-transcript       - process transcript -> Jira tickets
+    POST /api/v1/submit-ticket            - create a single pre-authored ticket
+    GET  /api/v1/jira/projects            - list accessible Jira projects
+    GET  /                                - web UI (bot/web/index.html)
 
 Phase 2 will add:
     POST /api/messages                    - Bot Framework Teams message handler
@@ -18,12 +21,14 @@ from contextlib import asynccontextmanager
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 # Load .env before importing anything that reads env vars
 load_dotenv()
 
 from config.settings import PROVIDER
 from bot.api.routes.transcript import router as transcript_router
+from bot.api.routes.jira_projects import router as jira_projects_router
 
 
 # ---------------------------------------------------------------------------
@@ -62,8 +67,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Mount transcript route at /api/v1
-app.include_router(transcript_router, prefix="/api/v1")
+# Mount API routes at /api/v1
+app.include_router(transcript_router,  prefix="/api/v1")
+app.include_router(jira_projects_router, prefix="/api/v1")
 
 
 # ---------------------------------------------------------------------------
@@ -91,3 +97,15 @@ async def health() -> JSONResponse:
             "jira_project": os.environ.get("JIRA_PROJECT_KEY", "ST"),
         }
     )
+
+
+# ---------------------------------------------------------------------------
+# Static file serving — web UI
+# Must be mounted LAST so API routes take precedence.
+# ---------------------------------------------------------------------------
+
+import pathlib as _pathlib
+
+_web_dir = _pathlib.Path(__file__).parent.parent / "web"
+if _web_dir.is_dir():
+    app.mount("/", StaticFiles(directory=str(_web_dir), html=True), name="web")

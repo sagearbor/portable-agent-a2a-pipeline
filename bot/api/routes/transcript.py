@@ -29,6 +29,12 @@ class TranscriptRequest(BaseModel):
     project_key: str = "ST"
     meeting_title: str = "Meeting"
     dry_run: bool = False
+    # Optional credential overrides — when provided these take precedence
+    # over the corresponding JIRA_* environment variables.
+    jira_base_url:   str | None = None
+    jira_email:      str | None = None
+    jira_api_token:  str | None = None
+    jira_project_key: str | None = None
 
 
 class TicketResult(BaseModel):
@@ -76,11 +82,25 @@ async def process_transcript(req: TranscriptRequest) -> TranscriptResponse:
 
     start = time.time()
 
-    # Temporarily override JIRA_PROJECT_KEY if a non-default project is specified
+    # Temporarily override JIRA_PROJECT_KEY if a non-default project is specified.
+    # req.jira_project_key (from the UI) takes precedence over req.project_key.
+    effective_project_key = req.jira_project_key or req.project_key
     original_project_key = os.environ.get("JIRA_PROJECT_KEY", "ST")
-    key_overridden = req.project_key != original_project_key
+    key_overridden = effective_project_key != original_project_key
     if key_overridden:
-        os.environ["JIRA_PROJECT_KEY"] = req.project_key
+        os.environ["JIRA_PROJECT_KEY"] = effective_project_key
+
+    # Build optional credential overrides dict for agent3
+    jira_creds: dict | None = None
+    if req.jira_base_url or req.jira_email or req.jira_api_token:
+        jira_creds = {
+            k: v for k, v in {
+                "JIRA_BASE_URL":    req.jira_base_url,
+                "JIRA_EMAIL":       req.jira_email,
+                "JIRA_API_TOKEN":   req.jira_api_token,
+                "JIRA_PROJECT_KEY": req.jira_project_key or effective_project_key,
+            }.items() if v is not None
+        }
 
     try:
         # Step 1: Convert transcript to email-shaped items
@@ -94,7 +114,7 @@ async def process_transcript(req: TranscriptRequest) -> TranscriptResponse:
                 status="success",
                 provider=PROVIDER,
                 meeting_title=req.meeting_title,
-                project_key=req.project_key,
+                project_key=effective_project_key,
                 tickets_drafted=0,
                 tickets_created=0,
                 dry_run=req.dry_run,
@@ -112,6 +132,7 @@ async def process_transcript(req: TranscriptRequest) -> TranscriptResponse:
         raw_tickets = agent3_jira.run(
             approved_items=approved_items,
             dry_run=req.dry_run,
+            jira_creds=jira_creds,
         )
 
         # Step 5: Build response
@@ -134,7 +155,7 @@ async def process_transcript(req: TranscriptRequest) -> TranscriptResponse:
             status="success",
             provider=PROVIDER,
             meeting_title=req.meeting_title,
-            project_key=req.project_key,
+            project_key=effective_project_key,
             tickets_drafted=len(drafts),
             tickets_created=len(created),
             dry_run=req.dry_run,
@@ -169,3 +190,86 @@ async def process_transcript(req: TranscriptRequest) -> TranscriptResponse:
         # Restore original project key
         if key_overridden:
             os.environ["JIRA_PROJECT_KEY"] = original_project_key
+
+
+# ---------------------------------------------------------------------------
+# Individual ticket submission (used by the web UI "Create Selected Tickets")
+# ---------------------------------------------------------------------------
+
+class SubmitTicketRequest(BaseModel):
+    """
+    Create a single pre-authored Jira ticket.
+
+    Used by the web UI after the user reviews and edits draft tickets.
+    Bypasses the LLM pipeline — the summary/description come directly
+    from the user's edits.
+    """
+    summary:     str
+    description: str
+    priority:    str = "Medium"
+    project_key: str = "ST"
+    # Optional credential overrides (same semantics as TranscriptRequest)
+    jira_base_url:  str | None = None
+    jira_email:     str | None = None
+    jira_api_token: str | None = None
+
+
+@router.post("/submit-ticket", response_model=TicketResult)
+async def submit_ticket(req: SubmitTicketRequest) -> TicketResult:
+    """
+    Create a single Jira ticket from pre-authored content.
+
+    Called by the web UI for each checked ticket row after the user
+    finishes editing.  No LLM involved — the summary and description
+    are taken verbatim from the request.
+    """
+    from tools.jira_tool import create_ticket as _create_ticket, JiraCredentials
+
+    # Build credentials object (or None to fall back to env vars)
+    credentials: JiraCredentials | None = None
+    if req.jira_base_url or req.jira_email or req.jira_api_token:
+        credentials = JiraCredentials(
+            base_url=req.jira_base_url    or os.environ.get("JIRA_BASE_URL",   ""),
+            email=req.jira_email          or os.environ.get("JIRA_EMAIL",      ""),
+            api_token=req.jira_api_token  or os.environ.get("JIRA_API_TOKEN",  ""),
+            project_key=req.project_key,
+        )
+
+    # Temporarily set JIRA_PROJECT_KEY so the fallback path in _client() works
+    original_key = os.environ.get("JIRA_PROJECT_KEY", "ST")
+    key_overridden = req.project_key != original_key
+    if key_overridden:
+        os.environ["JIRA_PROJECT_KEY"] = req.project_key
+
+    try:
+        result = _create_ticket(
+            summary=req.summary,
+            description=req.description,
+            priority=req.priority,
+            credentials=credentials,
+        )
+        return TicketResult(
+            ticket_id=result["ticket_id"],
+            url=result.get("url", ""),
+            status=result["status"],
+            summary=result["summary"],
+            priority=result.get("priority", req.priority),
+            description=req.description,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={"status": "error", "error_code": "JIRA_ERROR", "message": str(exc)},
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "error_code": "UNEXPECTED_ERROR",
+                "message": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    finally:
+        if key_overridden:
+            os.environ["JIRA_PROJECT_KEY"] = original_key

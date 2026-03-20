@@ -12,9 +12,10 @@ as an actual tool/function call rather than a direct Python import.
 """
 
 import json
+import os
 from clients.client import get_client, token_limit_kwarg
 from config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
-from tools.jira_tool import create_ticket
+from tools.jira_tool import create_ticket, JiraCredentials
 
 AGENT_DEFINITION = {
     "name": "jira-creator",
@@ -38,7 +39,11 @@ AGENT_DEFINITION = {
 }
 
 
-def run(approved_items: list[dict], dry_run: bool = False) -> list[dict]:
+def run(
+    approved_items: list[dict],
+    dry_run: bool = False,
+    jira_creds: dict | None = None,
+) -> list[dict]:
     """
     Write and create Jira tickets for all approved items from Agent 2.
     Returns list of created (or drafted, if dry_run=True) ticket results.
@@ -48,6 +53,11 @@ def run(approved_items: list[dict], dry_run: bool = False) -> list[dict]:
         dry_run:        If True, skip the actual Jira API call. Returns draft
                         results with status="draft" and a placeholder ticket_id.
                         Use this to preview tickets without creating them.
+        jira_creds:     Optional dict of Jira credential overrides.  Keys are
+                        the same env-var names used by jira_tool:
+                        JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN,
+                        JIRA_PROJECT_KEY.  When provided these take precedence
+                        over environment variables for this call only.
     """
     dry_label = " [DRY RUN]" if dry_run else ""
     print(f"\n{'='*60}")
@@ -104,10 +114,21 @@ def run(approved_items: list[dict], dry_run: bool = False) -> list[dict]:
             results.append(result)
             print(f"[agent3] [DRY RUN] Drafted ticket {i}: {ticket['summary'][:60]}")
         else:
+            # Convert the optional dict of env-var-keyed overrides into the
+            # JiraCredentials dataclass that jira_tool expects.
+            credentials: JiraCredentials | None = None
+            if jira_creds:
+                credentials = JiraCredentials(
+                    base_url=jira_creds.get("JIRA_BASE_URL",    os.environ.get("JIRA_BASE_URL", "")),
+                    email=jira_creds.get("JIRA_EMAIL",          os.environ.get("JIRA_EMAIL", "")),
+                    api_token=jira_creds.get("JIRA_API_TOKEN",  os.environ.get("JIRA_API_TOKEN", "")),
+                    project_key=jira_creds.get("JIRA_PROJECT_KEY", os.environ.get("JIRA_PROJECT_KEY", "ST")),
+                )
             result = create_ticket(
                 summary=ticket["summary"],
                 description=ticket["description"],
                 priority=ticket.get("priority", "Medium"),
+                credentials=credentials,
             )
             result["email_id"] = ticket.get("email_id", "")
             result["description"] = ticket.get("description", "")

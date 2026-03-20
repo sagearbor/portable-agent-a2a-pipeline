@@ -1,0 +1,1191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SageJiraBot — Transcript Processor</title>
+  <style>
+    /* -----------------------------------------------------------------------
+       Reset & base
+    ----------------------------------------------------------------------- */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --sidebar-bg:    #1a1d23;
+      --sidebar-w:     240px;
+      --accent:        #4f8ef7;
+      --accent-hover:  #3a78e0;
+      --danger:        #e05252;
+      --success:       #3dbc77;
+      --warn:          #e0a832;
+      --text:          #e8eaf0;
+      --text-muted:    #8b90a0;
+      --content-bg:    #f4f6fb;
+      --card-bg:       #ffffff;
+      --border:        #dde1eb;
+      --input-bg:      #ffffff;
+      --font:          'Segoe UI', system-ui, sans-serif;
+      --radius:        6px;
+    }
+
+    html, body { height: 100%; font-family: var(--font); font-size: 14px; }
+
+    body {
+      display: flex;
+      background: var(--content-bg);
+      color: #2d3142;
+    }
+
+    /* -----------------------------------------------------------------------
+       Sidebar
+    ----------------------------------------------------------------------- */
+    #sidebar {
+      width: var(--sidebar-w);
+      min-width: var(--sidebar-w);
+      background: var(--sidebar-bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      padding: 24px 0;
+      position: fixed;
+      top: 0; left: 0; bottom: 0;
+      z-index: 10;
+    }
+
+    #sidebar .logo {
+      padding: 0 20px 24px;
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+
+    #sidebar .logo h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      line-height: 1.3;
+    }
+
+    #sidebar .logo p {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 4px;
+    }
+
+    #sidebar nav {
+      padding: 16px 0;
+    }
+
+    #sidebar nav a {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 20px;
+      color: var(--text-muted);
+      text-decoration: none;
+      font-size: 13px;
+      transition: all 0.15s;
+    }
+
+    #sidebar nav a.active,
+    #sidebar nav a:hover {
+      color: #fff;
+      background: rgba(255,255,255,0.07);
+    }
+
+    #sidebar nav a .step-num {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 600;
+      flex-shrink: 0;
+    }
+
+    #sidebar nav a.active .step-num {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    #sidebar nav a.done .step-num {
+      background: var(--success);
+      color: #fff;
+    }
+
+    #sidebar .sidebar-footer {
+      margin-top: auto;
+      padding: 16px 20px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+
+    #sidebar .sidebar-footer p {
+      font-size: 11px;
+      color: var(--text-muted);
+      line-height: 1.6;
+    }
+
+    /* -----------------------------------------------------------------------
+       Main content
+    ----------------------------------------------------------------------- */
+    #main {
+      margin-left: var(--sidebar-w);
+      flex: 1;
+      padding: 32px;
+      max-width: 900px;
+    }
+
+    /* -----------------------------------------------------------------------
+       Cards / sections
+    ----------------------------------------------------------------------- */
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+
+    .card h2 {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #1a1d23;
+    }
+
+    .card .subtitle {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 20px;
+    }
+
+    /* -----------------------------------------------------------------------
+       Form elements
+    ----------------------------------------------------------------------- */
+    .form-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .form-row.single {
+      grid-template-columns: 1fr;
+    }
+
+    .field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #4a5066;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    input[type="text"],
+    input[type="password"],
+    input[type="email"],
+    select,
+    textarea {
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-family: var(--font);
+      background: var(--input-bg);
+      color: #2d3142;
+      transition: border-color 0.15s;
+      outline: none;
+    }
+
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79,142,247,0.12);
+    }
+
+    select:disabled {
+      background: #f0f2f8;
+      color: var(--text-muted);
+      cursor: not-allowed;
+    }
+
+    textarea {
+      resize: vertical;
+      min-height: 80px;
+    }
+
+    /* -----------------------------------------------------------------------
+       Buttons
+    ----------------------------------------------------------------------- */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border: none;
+      border-radius: var(--radius);
+      font-size: 13px;
+      font-weight: 600;
+      font-family: var(--font);
+      cursor: pointer;
+      transition: all 0.15s;
+      white-space: nowrap;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .btn-primary:hover:not(:disabled) {
+      background: var(--accent-hover);
+    }
+
+    .btn-secondary {
+      background: #f0f2f8;
+      color: #2d3142;
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover:not(:disabled) {
+      background: #e4e8f4;
+    }
+
+    .btn-success {
+      background: var(--success);
+      color: #fff;
+    }
+
+    .btn-success:hover:not(:disabled) {
+      background: #35a869;
+    }
+
+    .btn-danger {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--danger);
+      padding: 4px 8px;
+      font-size: 12px;
+    }
+
+    .btn-danger:hover:not(:disabled) {
+      background: var(--danger);
+      color: #fff;
+    }
+
+    .btn:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    .btn.loading::after {
+      content: '';
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(255,255,255,0.4);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.6s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* -----------------------------------------------------------------------
+       Status / alert banners
+    ----------------------------------------------------------------------- */
+    .alert {
+      padding: 10px 14px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+    }
+
+    .alert.show { display: block; }
+
+    .alert-error   { background: #fdeaea; border: 1px solid #f5c6c6; color: #c0392b; }
+    .alert-success { background: #e8f8f0; border: 1px solid #b8e8d0; color: #1e6644; }
+    .alert-info    { background: #e8f0fe; border: 1px solid #c5d8f8; color: #1a4f9c; }
+
+    /* -----------------------------------------------------------------------
+       Drag-drop zone
+    ----------------------------------------------------------------------- */
+    #drop-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 36px 24px;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+      margin-bottom: 12px;
+    }
+
+    #drop-zone:hover,
+    #drop-zone.drag-over {
+      border-color: var(--accent);
+      background: #f0f5ff;
+    }
+
+    #drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    #drop-zone .drop-icon {
+      font-size: 32px;
+      margin-bottom: 8px;
+      color: var(--text-muted);
+    }
+
+    #drop-zone p {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    #drop-zone .file-name {
+      font-weight: 600;
+      color: var(--accent);
+      margin-top: 6px;
+      font-size: 13px;
+    }
+
+    .divider-or {
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 12px;
+      margin: 12px 0;
+      position: relative;
+    }
+
+    .divider-or::before,
+    .divider-or::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      width: 45%;
+      height: 1px;
+      background: var(--border);
+    }
+
+    .divider-or::before { left: 0; }
+    .divider-or::after  { right: 0; }
+
+    /* -----------------------------------------------------------------------
+       Ticket table
+    ----------------------------------------------------------------------- */
+    #tickets-section { display: none; }
+
+    .ticket-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+
+    .ticket-table th {
+      text-align: left;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      padding: 8px 10px;
+      border-bottom: 2px solid var(--border);
+      background: #f8f9fd;
+    }
+
+    .ticket-table th:first-child {
+      width: 36px;
+      text-align: center;
+    }
+
+    .ticket-table td {
+      padding: 10px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+    }
+
+    .ticket-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    .ticket-table tr.deleted {
+      opacity: 0.35;
+      pointer-events: none;
+    }
+
+    .ticket-table input[type="text"],
+    .ticket-table select {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 13px;
+    }
+
+    .ticket-table textarea {
+      width: 100%;
+      padding: 6px 8px;
+      font-size: 12px;
+      line-height: 1.5;
+      min-height: 60px;
+    }
+
+    .ticket-table .col-check  { width: 36px; text-align: center; }
+    .ticket-table .col-sum    { min-width: 200px; }
+    .ticket-table .col-pri    { width: 110px; }
+    .ticket-table .col-desc   { min-width: 260px; }
+    .ticket-table .col-del    { width: 70px; text-align: center; }
+
+    .ticket-status-badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .badge-draft   { background: #e8f0fe; color: #1a4f9c; }
+    .badge-created { background: #e8f8f0; color: #1e6644; }
+    .badge-error   { background: #fdeaea; color: #c0392b; }
+
+    /* -----------------------------------------------------------------------
+       Submit bar
+    ----------------------------------------------------------------------- */
+    .submit-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 16px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .submit-bar .count-label {
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    /* -----------------------------------------------------------------------
+       Connection status dot
+    ----------------------------------------------------------------------- */
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-muted);
+      display: inline-block;
+      margin-right: 6px;
+    }
+
+    .status-dot.connected  { background: var(--success); }
+    .status-dot.error      { background: var(--danger); }
+
+    .conn-status {
+      display: flex;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 10px;
+    }
+
+    /* -----------------------------------------------------------------------
+       Transcript controls row
+    ----------------------------------------------------------------------- */
+    .transcript-meta {
+      display: flex;
+      gap: 12px;
+      align-items: flex-end;
+      margin-top: 12px;
+      flex-wrap: wrap;
+    }
+
+    .transcript-meta .field {
+      flex: 1;
+      min-width: 160px;
+    }
+
+    /* -----------------------------------------------------------------------
+       Scrollable description
+    ----------------------------------------------------------------------- */
+    .desc-expand {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 11px;
+      cursor: pointer;
+      padding: 2px 0;
+      text-decoration: underline;
+    }
+
+    /* -----------------------------------------------------------------------
+       Utility
+    ----------------------------------------------------------------------- */
+    .mt-12 { margin-top: 12px; }
+    .text-muted { color: var(--text-muted); font-size: 12px; }
+    .flex-row { display: flex; gap: 8px; align-items: center; }
+  </style>
+</head>
+<body>
+
+<!-- =========================================================================
+     SIDEBAR
+========================================================================= -->
+<aside id="sidebar">
+  <div class="logo">
+    <h1>SageJiraBot</h1>
+    <p>Transcript &rarr; Jira Tickets</p>
+  </div>
+
+  <nav>
+    <a href="#section-connect" id="nav-connect" class="active">
+      <span class="step-num">1</span>
+      Jira Connection
+    </a>
+    <a href="#section-transcript" id="nav-transcript">
+      <span class="step-num">2</span>
+      Transcript Input
+    </a>
+    <a href="#section-tickets" id="nav-tickets">
+      <span class="step-num">3</span>
+      Review &amp; Submit
+    </a>
+  </nav>
+
+  <div class="sidebar-footer">
+    <p>Powered by the portable-agent-a2a-pipeline. Tickets are created in your chosen Jira project.</p>
+  </div>
+</aside>
+
+<!-- =========================================================================
+     MAIN CONTENT
+========================================================================= -->
+<main id="main">
+
+  <!-- -----------------------------------------------------------------------
+       SECTION 1 — Jira Connection
+  ----------------------------------------------------------------------- -->
+  <div class="card" id="section-connect">
+    <h2>Step 1 — Connect to Jira</h2>
+    <p class="subtitle">Enter your Jira credentials to load the projects you have access to.</p>
+
+    <div class="form-row single">
+      <div class="field">
+        <label for="jira-base-url">Jira Base URL</label>
+        <input type="text" id="jira-base-url" value="https://dcri.atlassian.net" placeholder="https://yourorg.atlassian.net" />
+      </div>
+    </div>
+
+    <div class="form-row">
+      <div class="field">
+        <label for="jira-email">Jira Email</label>
+        <input type="text" id="jira-email" placeholder="you@example.com" autocomplete="username" />
+      </div>
+      <div class="field">
+        <label for="jira-token">Jira API Token</label>
+        <input type="password" id="jira-token" placeholder="Paste API token here" autocomplete="current-password" />
+      </div>
+    </div>
+
+    <div class="flex-row mt-12">
+      <button class="btn btn-primary" id="btn-connect">Connect</button>
+      <div class="conn-status" id="conn-status">
+        <span class="status-dot" id="conn-dot"></span>
+        <span id="conn-label">Not connected</span>
+      </div>
+    </div>
+
+    <div class="alert alert-error" id="connect-error"></div>
+  </div>
+
+  <!-- -----------------------------------------------------------------------
+       SECTION 2 — Transcript Input
+  ----------------------------------------------------------------------- -->
+  <div class="card" id="section-transcript">
+    <h2>Step 2 — Provide Transcript</h2>
+    <p class="subtitle">Drop a .txt / .vtt / .srt file, or paste transcript text directly.</p>
+
+    <!-- Drag-drop zone -->
+    <div id="drop-zone">
+      <input type="file" id="file-input" accept=".txt,.vtt,.srt" />
+      <div class="drop-icon">&#8659;</div>
+      <p>Drag &amp; drop a transcript file here</p>
+      <p style="font-size:11px; margin-top:4px; color:#aaa;">.txt &nbsp;.vtt &nbsp;.srt</p>
+      <p class="file-name" id="file-name-label" style="display:none;"></p>
+    </div>
+
+    <div class="divider-or">or paste below</div>
+
+    <textarea id="transcript-text" rows="8" placeholder="Paste transcript text here..."></textarea>
+
+    <!-- Metadata & project selection -->
+    <div class="transcript-meta">
+      <div class="field">
+        <label for="meeting-title">Meeting Title (optional)</label>
+        <input type="text" id="meeting-title" placeholder="e.g. Sprint Planning — March 2026" />
+      </div>
+      <div class="field">
+        <label for="project-select">Jira Project</label>
+        <select id="project-select" disabled>
+          <option value="">— connect first —</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" id="btn-analyze" disabled>
+        Analyze Transcript
+      </button>
+    </div>
+
+    <div class="alert alert-error"   id="analyze-error"></div>
+    <div class="alert alert-info"    id="analyze-info"></div>
+  </div>
+
+  <!-- -----------------------------------------------------------------------
+       SECTION 3 — Review &amp; Submit Tickets
+  ----------------------------------------------------------------------- -->
+  <div class="card" id="section-tickets" style="display:none;">
+    <h2>Step 3 — Review Draft Tickets</h2>
+    <p class="subtitle">Edit fields, uncheck rows to skip, then click "Create Selected Tickets".</p>
+
+    <table class="ticket-table" id="ticket-table">
+      <thead>
+        <tr>
+          <th class="col-check"><input type="checkbox" id="chk-all" title="Select all" /></th>
+          <th class="col-sum">Summary</th>
+          <th class="col-pri">Priority</th>
+          <th class="col-desc">Description</th>
+          <th class="col-del"></th>
+        </tr>
+      </thead>
+      <tbody id="ticket-tbody"></tbody>
+    </table>
+
+    <div class="submit-bar">
+      <span class="count-label" id="selected-count">0 tickets selected</span>
+      <button class="btn btn-success" id="btn-submit" disabled>
+        Create Selected Tickets
+      </button>
+    </div>
+
+    <div class="alert alert-error"   id="submit-error"></div>
+    <div class="alert alert-success" id="submit-success"></div>
+  </div>
+
+</main>
+
+<script>
+/* =========================================================================
+   State
+========================================================================= */
+const state = {
+  connected: false,
+  baseUrl:   '',
+  email:     '',
+  token:     '',
+  projectKey: '',
+  transcriptText: '',
+  draftTickets: [],   // [{summary, priority, description, email_id, checked, deleted}]
+};
+
+/* =========================================================================
+   Helpers
+========================================================================= */
+function showAlert(el, msg) {
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
+function hideAlert(el) {
+  el.classList.remove('show');
+  el.textContent = '';
+}
+
+function setLoading(btn, isLoading) {
+  btn.disabled = isLoading;
+  if (isLoading) {
+    btn.classList.add('loading');
+    btn.dataset.origText = btn.textContent;
+    btn.textContent = '';
+  } else {
+    btn.classList.remove('loading');
+    btn.textContent = btn.dataset.origText || btn.textContent;
+  }
+}
+
+function updateNavSteps() {
+  const connectNav    = document.getElementById('nav-connect');
+  const transcriptNav = document.getElementById('nav-transcript');
+  const ticketsNav    = document.getElementById('nav-tickets');
+
+  [connectNav, transcriptNav, ticketsNav].forEach(a => {
+    a.classList.remove('active', 'done');
+  });
+
+  if (state.draftTickets.length > 0) {
+    connectNav.classList.add('done');
+    transcriptNav.classList.add('done');
+    ticketsNav.classList.add('active');
+  } else if (state.connected) {
+    connectNav.classList.add('done');
+    transcriptNav.classList.add('active');
+  } else {
+    connectNav.classList.add('active');
+  }
+}
+
+/* =========================================================================
+   Section 1 — Connect
+========================================================================= */
+document.getElementById('btn-connect').addEventListener('click', async () => {
+  const btn      = document.getElementById('btn-connect');
+  const errEl    = document.getElementById('connect-error');
+  const dot      = document.getElementById('conn-dot');
+  const label    = document.getElementById('conn-label');
+  const select   = document.getElementById('project-select');
+
+  hideAlert(errEl);
+  setLoading(btn, true);
+
+  const baseUrl = document.getElementById('jira-base-url').value.trim().replace(/\/$/, '');
+  const email   = document.getElementById('jira-email').value.trim();
+  const token   = document.getElementById('jira-token').value.trim();
+
+  if (!baseUrl || !email || !token) {
+    showAlert(errEl, 'Please fill in all three fields: Base URL, Email, and API Token.');
+    setLoading(btn, false);
+    return;
+  }
+
+  try {
+    const params = new URLSearchParams({ base_url: baseUrl, email, token });
+    const resp   = await fetch(`/api/v1/jira/projects?${params}`);
+
+    if (resp.status === 401) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.detail || 'Invalid credentials — check your email and API token.');
+    }
+
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(data.detail || `Server error ${resp.status}`);
+    }
+
+    const projects = await resp.json();
+
+    // Populate dropdown
+    select.innerHTML = '<option value="">— select project —</option>';
+    projects.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p.key;
+      opt.textContent = `${p.name} (${p.key})`;
+      select.appendChild(opt);
+    });
+    select.disabled = false;
+
+    // Update state
+    state.connected = true;
+    state.baseUrl   = baseUrl;
+    state.email     = email;
+    state.token     = token;
+
+    // UI feedback
+    dot.classList.add('connected');
+    dot.classList.remove('error');
+    label.textContent = `Connected — ${projects.length} project${projects.length !== 1 ? 's' : ''} loaded`;
+
+    updateNavSteps();
+    updateAnalyzeBtn();
+
+  } catch (err) {
+    state.connected = false;
+    dot.classList.add('error');
+    dot.classList.remove('connected');
+    label.textContent = 'Connection failed';
+    showAlert(errEl, err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+});
+
+/* =========================================================================
+   Section 2 — Transcript Input
+========================================================================= */
+
+// File drag-and-drop
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+dropZone.addEventListener('dragover', e => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+
+dropZone.addEventListener('dragleave', () => {
+  dropZone.classList.remove('drag-over');
+});
+
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+
+fileInput.addEventListener('change', () => {
+  if (fileInput.files[0]) loadFile(fileInput.files[0]);
+});
+
+function loadFile(file) {
+  const allowed = ['.txt', '.vtt', '.srt'];
+  const ext = '.' + file.name.split('.').pop().toLowerCase();
+  if (!allowed.includes(ext)) {
+    alert('Unsupported file type. Please upload a .txt, .vtt, or .srt file.');
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result;
+    document.getElementById('transcript-text').value = text;
+    state.transcriptText = text;
+
+    const label = document.getElementById('file-name-label');
+    label.textContent = file.name;
+    label.style.display = 'block';
+
+    updateAnalyzeBtn();
+  };
+  reader.readAsText(file);
+}
+
+// Textarea input
+document.getElementById('transcript-text').addEventListener('input', function () {
+  state.transcriptText = this.value;
+  // Clear file label if user types
+  if (!this.value) {
+    document.getElementById('file-name-label').style.display = 'none';
+  }
+  updateAnalyzeBtn();
+});
+
+// Project selection
+document.getElementById('project-select').addEventListener('change', function () {
+  state.projectKey = this.value;
+  updateAnalyzeBtn();
+});
+
+function updateAnalyzeBtn() {
+  const btn = document.getElementById('btn-analyze');
+  const hasProject    = !!state.projectKey;
+  const hasTranscript = !!(state.transcriptText || '').trim();
+  const connected     = state.connected;
+  btn.disabled = !(connected && hasProject && hasTranscript);
+}
+
+// Analyze button
+document.getElementById('btn-analyze').addEventListener('click', async () => {
+  const btn       = document.getElementById('btn-analyze');
+  const errEl     = document.getElementById('analyze-error');
+  const infoEl    = document.getElementById('analyze-info');
+
+  hideAlert(errEl);
+  hideAlert(infoEl);
+  setLoading(btn, true);
+
+  const transcript = (document.getElementById('transcript-text').value || '').trim();
+  const meetingTitle = document.getElementById('meeting-title').value.trim() || 'Meeting';
+
+  showAlert(infoEl, 'Running pipeline in dry-run mode. This may take 10-30 seconds...');
+
+  try {
+    const payload = {
+      transcript,
+      project_key:    state.projectKey,
+      meeting_title:  meetingTitle,
+      dry_run:        true,
+      jira_base_url:  state.baseUrl,
+      jira_email:     state.email,
+      jira_api_token: state.token,
+      jira_project_key: state.projectKey,
+    };
+
+    const resp = await fetch('/api/v1/process-transcript', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(payload),
+    });
+
+    hideAlert(infoEl);
+
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      const msg = (data.detail && typeof data.detail === 'object')
+        ? data.detail.message
+        : (data.detail || `Server error ${resp.status}`);
+      throw new Error(msg);
+    }
+
+    const data = await resp.json();
+
+    if (!data.tickets || data.tickets.length === 0) {
+      showAlert(infoEl, 'The pipeline found no actionable items in this transcript. Try a different transcript.');
+      setLoading(btn, false);
+      return;
+    }
+
+    // Store drafts
+    state.draftTickets = data.tickets.map(t => ({
+      email_id:    t.ticket_id,
+      summary:     t.summary,
+      priority:    t.priority || 'Medium',
+      description: t.description || '',
+      checked:     true,
+      deleted:     false,
+    }));
+
+    renderTickets();
+    document.getElementById('section-tickets').style.display = 'block';
+    document.getElementById('section-tickets').scrollIntoView({ behavior: 'smooth' });
+    updateNavSteps();
+
+  } catch (err) {
+    hideAlert(infoEl);
+    showAlert(errEl, err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+});
+
+/* =========================================================================
+   Section 3 — Ticket Review
+========================================================================= */
+function renderTickets() {
+  const tbody = document.getElementById('ticket-tbody');
+  tbody.innerHTML = '';
+
+  state.draftTickets.forEach((ticket, idx) => {
+    const tr = document.createElement('tr');
+    tr.dataset.idx = idx;
+    if (ticket.deleted) tr.classList.add('deleted');
+
+    tr.innerHTML = `
+      <td class="col-check">
+        <input type="checkbox" class="row-check" data-idx="${idx}" ${ticket.checked && !ticket.deleted ? 'checked' : ''} ${ticket.deleted ? 'disabled' : ''} />
+      </td>
+      <td class="col-sum">
+        <input type="text" class="summary-input" data-idx="${idx}" value="${escHtml(ticket.summary)}" />
+        ${ticket.result_badge ? ticket.result_badge : ''}
+      </td>
+      <td class="col-pri">
+        <select class="priority-select" data-idx="${idx}" ${ticket.deleted ? 'disabled' : ''}>
+          ${['Critical','High','Medium','Low'].map(p =>
+            `<option value="${p}" ${ticket.priority === p ? 'selected' : ''}>${p}</option>`
+          ).join('')}
+        </select>
+      </td>
+      <td class="col-desc">
+        <textarea class="desc-input" data-idx="${idx}" rows="3">${escHtml(ticket.description)}</textarea>
+      </td>
+      <td class="col-del">
+        ${!ticket.deleted
+          ? `<button class="btn btn-danger del-btn" data-idx="${idx}" title="Remove this ticket">Remove</button>`
+          : `<span class="text-muted" style="font-size:11px;">Removed</span>`
+        }
+      </td>
+    `;
+
+    tbody.appendChild(tr);
+  });
+
+  // Bind row checkbox changes
+  tbody.querySelectorAll('.row-check').forEach(chk => {
+    chk.addEventListener('change', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].checked = this.checked;
+      updateSelectedCount();
+    });
+  });
+
+  // Bind summary edits
+  tbody.querySelectorAll('.summary-input').forEach(inp => {
+    inp.addEventListener('input', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].summary = this.value;
+    });
+  });
+
+  // Bind priority changes
+  tbody.querySelectorAll('.priority-select').forEach(sel => {
+    sel.addEventListener('change', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].priority = this.value;
+    });
+  });
+
+  // Bind description edits
+  tbody.querySelectorAll('.desc-input').forEach(ta => {
+    ta.addEventListener('input', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].description = this.value;
+    });
+  });
+
+  // Bind delete buttons
+  tbody.querySelectorAll('.del-btn').forEach(btn => {
+    btn.addEventListener('click', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].deleted = true;
+      state.draftTickets[idx].checked = false;
+      renderTickets();
+      updateSelectedCount();
+    });
+  });
+
+  updateSelectedCount();
+  updateSelectAll();
+}
+
+function escHtml(str) {
+  return (str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+// Select-all checkbox
+document.getElementById('chk-all').addEventListener('change', function () {
+  const checked = this.checked;
+  state.draftTickets.forEach(t => {
+    if (!t.deleted) t.checked = checked;
+  });
+  renderTickets();
+  updateSelectedCount();
+});
+
+function updateSelectAll() {
+  const chkAll  = document.getElementById('chk-all');
+  const active  = state.draftTickets.filter(t => !t.deleted);
+  const allChk  = active.length > 0 && active.every(t => t.checked);
+  chkAll.checked = allChk;
+  chkAll.indeterminate = !allChk && active.some(t => t.checked);
+}
+
+function updateSelectedCount() {
+  const n = state.draftTickets.filter(t => t.checked && !t.deleted).length;
+  document.getElementById('selected-count').textContent =
+    `${n} ticket${n !== 1 ? 's' : ''} selected`;
+  document.getElementById('btn-submit').disabled = n === 0;
+  updateSelectAll();
+}
+
+// Submit selected tickets
+document.getElementById('btn-submit').addEventListener('click', async () => {
+  const btn       = document.getElementById('btn-submit');
+  const errEl     = document.getElementById('submit-error');
+  const successEl = document.getElementById('submit-success');
+
+  hideAlert(errEl);
+  hideAlert(successEl);
+
+  const selected = state.draftTickets.filter(t => t.checked && !t.deleted);
+  if (selected.length === 0) return;
+
+  setLoading(btn, true);
+
+  let created = 0;
+  let failed  = 0;
+  const results = [];
+
+  // Submit tickets one at a time so we can report per-ticket status
+  for (const ticket of selected) {
+    try {
+      const payload = {
+        transcript:      ticket.description + '\n\n' + ticket.summary,
+        project_key:     state.projectKey,
+        meeting_title:   ticket.summary,
+        dry_run:         false,
+        jira_base_url:   state.baseUrl,
+        jira_email:      state.email,
+        jira_api_token:  state.token,
+        jira_project_key: state.projectKey,
+        // Pass pre-authored ticket directly via the single-item path
+        _prebuilt_summary:     ticket.summary,
+        _prebuilt_description: ticket.description,
+        _prebuilt_priority:    ticket.priority,
+      };
+
+      // Use the submit endpoint (individual ticket creation)
+      const resp = await fetch('/api/v1/submit-ticket', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          summary:     ticket.summary,
+          description: ticket.description,
+          priority:    ticket.priority,
+          project_key: state.projectKey,
+          jira_base_url:   state.baseUrl,
+          jira_email:      state.email,
+          jira_api_token:  state.token,
+        }),
+      });
+
+      if (!resp.ok) {
+        const data = await resp.json().catch(() => ({}));
+        const msg = (data.detail && typeof data.detail === 'object')
+          ? data.detail.message
+          : (data.detail || `Error ${resp.status}`);
+        failed++;
+        results.push({ ticket, ok: false, msg });
+      } else {
+        const data = await resp.json();
+        created++;
+        results.push({ ticket, ok: true, data });
+      }
+    } catch (err) {
+      failed++;
+      results.push({ ticket, ok: false, msg: err.message });
+    }
+  }
+
+  // Update ticket rows with badges
+  results.forEach(r => {
+    const idx = state.draftTickets.indexOf(r.ticket);
+    if (idx === -1) return;
+    if (r.ok) {
+      const url = r.data && r.data.url ? r.data.url : '#';
+      const key = r.data && r.data.ticket_id ? r.data.ticket_id : 'OK';
+      state.draftTickets[idx].result_badge =
+        `<a href="${escHtml(url)}" target="_blank" class="ticket-status-badge badge-created">${escHtml(key)}</a>`;
+      state.draftTickets[idx].checked = false;
+      state.draftTickets[idx].deleted = false;
+    } else {
+      state.draftTickets[idx].result_badge =
+        `<span class="ticket-status-badge badge-error" title="${escHtml(r.msg)}">Error</span>`;
+    }
+  });
+
+  renderTickets();
+
+  if (failed === 0) {
+    showAlert(successEl, `All ${created} ticket${created !== 1 ? 's' : ''} created successfully.`);
+  } else if (created > 0) {
+    showAlert(successEl, `${created} ticket${created !== 1 ? 's' : ''} created. ${failed} failed — see error badges above.`);
+  } else {
+    showAlert(errEl, `Failed to create tickets. Check your credentials and Jira project settings.`);
+  }
+
+  setLoading(btn, false);
+});
+</script>
+</body>
+</html>
