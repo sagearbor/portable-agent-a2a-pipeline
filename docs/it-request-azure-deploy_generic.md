@@ -10,14 +10,14 @@
 
 ## Context
 
-I am the point person for evaluating and building AI agents at DCRI using Azure AI
+I am tasked with evaluating iand building AI agents at DCRI using Azure AI
 Foundry (`ai-foundry-dcri-sage`). This involves connecting LLMs to enterprise systems —
 Teams, Jira, Confluence, SharePoint, Outlook, and Azure services (Blob, Table, Container
 Apps) — and deploying those integrations as containerized applications.
 
-Each new project currently requires multiple IT tickets for infrastructure that is
-routine in AI development. This creates multi-week delays on work that would otherwise
-take hours. The three permissions below, all tightly scoped, would resolve this.
+Each new project could currently require multiple IT tickets for infrastructure that is
+routine in AI development. This creates delays and friction which stop work. 
+The three permissions below, all tightly scoped, would resolve this.
 
 ---
 
