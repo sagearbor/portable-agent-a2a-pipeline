@@ -48,7 +48,11 @@ Currently each project requires 3–5 IT tickets for routine setup. These three 
 | Permission | Scope | What it unblocks |
 |---|---|---|
 | `Application Developer` | Azure AD — own apps only | Create app registrations for OAuth/SSO integrations |
-| `Contributor` | `rg-dcri-prod-sage` only | Deploy Container Apps, Storage Accounts, Container Registries |
+| `Contributor` | `rg-dcri-prod-sage` only (new, isolated RG — zero cost) | Deploy Container Apps, Storage Accounts, Container Registries |
 | `User Access Administrator` | `ai-foundry-dcri-sage` only | Grant managed identity auth to deployed apps (no stored credentials) |
+
+The dedicated resource group pattern (item 2) is Microsoft's recommended approach for
+developer sandbox environments per the Azure Cloud Adoption Framework:
+https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ready/considerations/sandbox-environments
 
 **One question:** Is `Application Developer` assigned directly or via PIM?
