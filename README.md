@@ -1,7 +1,28 @@
-# sageTestAzAgents
+# portable-agent-a2a-pipeline
 
-Learning project: multi-agent system using Azure AI Foundry with A2A (agent-to-agent)
-communication and MCP (Model Context Protocol) tool calls.
+Multi-agent pipeline: Outlook emails -> LLM triage -> Jira tickets.
+Comparing portable (pure Python) agents vs Azure AI Foundry agents.
+
+## Quickstart
+
+```bash
+git clone git@github.com:sagearbor/portable-agent-a2a-pipeline.git
+cd portable-agent-a2a-pipeline
+python -m venv .venv
+source .venv/bin/activate           # Windows: .venv\Scripts\activate
+pip install -r requirements.txt
+cp .example.env .env                # no edits needed for managed identity
+
+# Azure login (one-time, persists ~90 days)
+az login --tenant "cb72c54e-4a31-4d9e-b14a-1ea36dfac94c"
+az account set --subscription "2c69c8ba-1dc1-444a-9a18-a483b0be57db"
+
+# Run the pipeline (requires VPN — AI Foundry has a private endpoint)
+python -m orchestration.pipeline
+```
+
+> **VPN note:** `az login` works without VPN, but API calls to AI Foundry require VPN.
+> Primary dev environment is the Unix VM (always on VPN).
 
 ---
 
@@ -99,72 +120,22 @@ AAD Tenant: cb72c54e-...  (Duke Health - identity/auth boundary for whole org)
 ## Project Structure
 
 ```
-sageTestAzAgents_01/
-│
-├── config/
-│   ├── __init__.py
-│   └── settings.py          # PROVIDER toggle, model names, auth mode, inference settings
-│
-├── clients/
-│   ├── __init__.py
-│   └── client.py            # get_client() - returns correct client for active PROVIDER
-│                            # _build_azure_client() - handles managed identity vs api key
-│
+portable-agent-a2a-pipeline/
+├── config/settings.py          # PROVIDER toggle, model names, auth mode, inference settings
+├── clients/client.py           # get_client() factory - returns (client, model) for active PROVIDER
 ├── agents/
-│   ├── agent1_email.py      # (TODO) reads Outlook folder, structures email data
-│   ├── agent2_router.py     # (TODO) decides if email content warrants a Jira ticket
-│   └── agent3_jira.py       # (TODO) creates Jira tickets via tool/MCP call
-│
+│   ├── agent1_email.py         # Email Reader: reads emails, LLM extracts structured data
+│   ├── agent2_router.py        # Router: filters actionable items, adds routing_reason
+│   └── agent3_jira.py          # Jira Creator: writes descriptions, creates tickets
 ├── tools/
-│   ├── outlook_tool.py      # (TODO) Microsoft Graph MCP / tool for reading email
-│   └── jira_tool.py         # (TODO) Jira API MCP / tool for creating tickets
-│
-├── .env.example             # copy to .env, fill in keys - never commit .env
-├── .gitignore
-├── requirements.txt
-├── setup-commands.md        # az/azd commands runbook - reproducible setup
-└── README.md                # this file
-```
-
----
-
-## Setup
-
-### 1. Clone and install dependencies
-
-```bash
-git clone <repo-url>
-cd sageTestAzAgents_01
-python -m venv .venv
-source .venv/bin/activate       # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-```
-
-### 2. Configure environment
-
-```bash
-cp .env.example .env
-# Edit .env - fill in AZURE_OPENAI_ENDPOINT at minimum
-# If using api_key auth mode, also fill in AZURE_OPENAI_KEY
-# If using openai_* providers, fill in OPENAI_API_KEY
-```
-
-### 3. Log in to Azure (for managed identity auth)
-
-See `setup-commands.md` for the full az login runbook.
-
-```bash
-az login --tenant "cb72c54e-4a31-4d9e-b14a-1ea36dfac94c"
-az account set --subscription "2c69c8ba-1dc1-444a-9a18-a483b0be57db"
-az account show  # verify
-```
-
-### 4. Set your provider
-
-Edit `config/settings.py`:
-```python
-PROVIDER = "azure"              # for Duke Health work
-PROVIDER = "openai_responses"   # for personal learning / non-PHI
+│   ├── outlook_tool.py         # STUB: read_emails() — Phase 2: Microsoft Graph API
+│   └── jira_tool.py            # STUB: create_ticket() — Phase 2: Jira REST API
+├── orchestration/pipeline.py   # Wires agents together, CLI entry point
+├── docs/
+│   └── managed-identity-guide.md  # Full auth walkthrough
+├── .example.env                # Copy to .env — no edits needed for managed identity
+├── setup-commands.md           # Azure CLI runbook
+└── CLAUDE.md                   # Context for Claude Code sessions
 ```
 
 ---
