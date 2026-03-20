@@ -19,7 +19,7 @@ Code is at: https://github.com/sagearbor/portable-agent-a2a-pipeline
 
 ---
 
-## Items Requested
+## Part A: SageJiraBot Deployment (Immediate Need)
 
 ### 1. Azure Container Registry (ACR)
 
@@ -28,7 +28,7 @@ Code is at: https://github.com/sagearbor/portable-agent-a2a-pipeline
 **Request:**
 - Create an ACR instance (Basic SKU, ~$5/month)
 - Suggested name: `acrdcriprodbot` (or follow naming convention)
-- Resource group: `rg-dcri-prod-ai-foundry` (so it's near the AI endpoint) or a new `rg-dcri-prod-bot`
+- Resource group: `rg-dcri-prod-ai-foundry` or a new dedicated `rg-dcri-prod-sage`
 - Grant `scb2@duke.edu` the `AcrPush` role so I can push images
 
 ---
@@ -108,73 +108,142 @@ Without it, the bot cannot receive messages in Teams.
 ### 5. Azure AD SPA App Registration (for web UI sign-in)
 
 **Why:** The web UI has a "Sign in with Microsoft" button that identifies who is submitting
-tickets. This is a separate, simpler app registration from the bot (no secret needed).
+tickets. I tried to create this myself in portal.azure.com but received "You do not have
+access" (Error 401) — the tenant policy blocks self-service app registration.
 
 **Request:**
-- Create a separate **Azure AD App Registration**:
+- Create a **Azure AD App Registration**:
   - Name: `SageJiraBotWeb`
   - Supported account types: Single tenant
   - Platform: **Single-page application (SPA)**
   - Redirect URIs: `https://<container-app-url>` and `http://localhost:9000` (for dev)
-  - Permissions: `openid`, `profile`, `email` — **no admin consent required** (basic user permissions)
+  - Permissions: `openid`, `profile`, `email` — no admin consent required
   - Share the **Application (client) ID**
 
 ---
 
 ### 6. Managed Identity for Container App → AI Foundry
 
-**Why:** Currently running locally with `az login`. In production the Container App needs
-a managed identity so it can call the AI Foundry endpoint without storing credentials.
+**Why:** In production the Container App needs a managed identity to call the AI Foundry
+endpoint without storing credentials anywhere.
 
 **Request:**
 - Enable **system-assigned managed identity** on the `sagejirabot` Container App
 - Grant that managed identity `Cognitive Services OpenAI Contributor` on `ai-foundry-dcri-sage`
-  (same role that `scb2@duke.edu` has on the resource — just for the managed identity)
 
 ---
 
-### 7. Graph API Permissions (Teams Transcript Fetching — Phase 2)
+### 7. Graph API Permissions (Teams Transcript Fetching — Phase 2, can defer)
 
-**Why:** Needed for the bot to automatically fetch meeting transcripts from Teams after a
-meeting ends. Not needed for Phase 1 (manual paste works without this).
+**Why:** Needed for the bot to automatically fetch meeting transcripts. Not needed for
+Phase 1 (manual paste works without this).
 
-**Request (can defer until Phase 2):**
-- On the Bot App Registration (item 4 above), add application permissions:
+**Request (defer to Phase 2):**
+- On the Bot App Registration (item 4), add application permissions:
   - `OnlineMeetings.Read.All`
   - `OnlineMeetingTranscript.Read.All`
 - **Admin consent required** for both
 
 ---
 
-## Summary Table
+## Part A Summary: What IT Creates vs. What I Do
 
-| # | Item | Why Needed | Phase | Admin Consent? | Est. Cost |
-|---|---|---|---|---|---|
-| 1 | Azure Container Registry | Push Docker images | 1 — needed for deploy | No | ~$5/mo |
-| 2 | Container App + Environment | Run the bot | 1 — needed for deploy | No | ~$0–10/mo |
-| 3 | Storage Account (Blob + Table) | Persist sessions and series defaults | 1 — needed for deploy | No | <$1/mo |
-| 4 | Azure Bot Service + App Reg | Route Teams messages to bot | 1 — Teams bot activation | No (client secret) | ~$0 (F0 tier) |
-| 5 | SPA App Registration (web UI SSO) | Identify who submits tickets | 1 — SSO sign-in | No | $0 |
-| 6 | Managed identity → AI Foundry | Auth for LLM calls in production | 1 — needed for deploy | No | $0 |
-| 7 | Graph API permissions | Auto-fetch Teams transcripts | Phase 2 | **Yes** | $0 |
+| # | Item | Who Creates | Role IT Grants Me | Phase | Admin Consent | Est. Cost |
+|---|---|---|---|---|---|---|
+| 1 | Azure Container Registry | IT creates | `AcrPush` on the ACR | 1 | No | ~$5/mo |
+| 2 | Container App + Environment | IT creates | `Contributor` on the Container App | 1 | No | ~$0–10/mo |
+| 3 | Storage Account (Blob + Table) | IT creates | Managed identity gets data roles | 1 | No | <$1/mo |
+| 4 | Bot Service + App Reg | IT creates | Shares App ID + secret | 1 | No | $0 |
+| 5 | SPA App Reg (web UI SSO) | IT creates | Shares Client ID | 1 | No | $0 |
+| 6 | Managed identity → AI Foundry | IT assigns role | — | 1 | No | $0 |
+| 7 | Graph API permissions | IT approves consent | — | Phase 2 | **Yes** | $0 |
 
-**Total new monthly cost estimate: ~$6–16/month** (vs. always-on VM cost)
+**Total new monthly cost estimate: ~$6–16/month**
 
 ---
 
-## What I Can Do Myself (No IT Needed)
+## Part B: Permanent Permissions to Unblock Future AI Development
 
-- Register the SPA app (item 5) — done, just need someone to review redirect URIs if policy requires
-- Push Docker images once ACR exists and I have AcrPush role
-- Deploy updated container versions once I have Contributor on the Container App
-- `az login` locally for development
+**Context:** I am building AI agents and tooling on Azure AI Foundry. Currently every
+new project requires an IT ticket for basic infrastructure setup, which creates weeks of
+delay and blocks my agents from being able to provision their own dependencies. I would
+like to be granted a small set of standing permissions that would let me work
+autonomously within a dedicated scope.
+
+### What I Am Asking For
+
+#### B1. Azure AD: `Application Developer` role (tenant-level)
+
+**What it does:** Allows me to create App Registrations (OAuth apps, SPA sign-in apps)
+in Azure AD without admin rights. I currently get "You do not have access" when trying
+to open App Registrations in the portal (Error 401). This is the **most impactful
+single permission** for AI development.
+
+**Scope:** Tenant-wide, but the role is non-admin — I cannot consent to Graph API
+permissions that require admin consent, cannot modify other users' apps, cannot grant
+roles. I can only create and manage my own app registrations.
+
+**Why I need it:** Every AI project that has a web UI or needs identity verification
+requires an app registration. Without this, each one is an IT ticket.
+
+---
+
+#### B2. `Contributor` on a dedicated resource group `rg-dcri-prod-sage`
+
+**What it does:** Allows me to create and manage Azure resources (Container Apps,
+Storage Accounts, Container Registries) within only that resource group. Has no effect
+on any other resource group.
+
+**Why I need it:** Currently I can use the AI Foundry endpoint but cannot deploy the
+applications that consume it. Every deployment is an IT ticket. With Contributor on a
+dedicated RG, I can:
+- Create Container Apps (deploy the bot)
+- Create Storage Accounts (state persistence)
+- Create Container Registries (push Docker images)
+- All scoped only to `rg-dcri-prod-sage`
+
+**I would NOT have:**
+- Access to any other resource group
+- Ability to modify `rg-dcri-prod-ai-foundry` (the AI Foundry resources)
+- Subscription-level access
+
+---
+
+#### B3. `Cognitive Services OpenAI Contributor` on `ai-foundry-dcri-sage` for any managed identity I create
+
+**What it does:** Allows me to grant new managed identities (on Container Apps I deploy)
+access to the AI Foundry endpoint, so my applications can authenticate as themselves
+rather than as me personally.
+
+**Currently:** I have this role for my personal account (`scb2@duke.edu`). When I
+deploy a Container App, the app's managed identity also needs this role — and I
+cannot grant it myself because I don't have role assignment permissions.
+
+**Alternative ask:** Grant me `User Access Administrator` scoped only to
+`ai-foundry-dcri-sage` (not the whole subscription), which lets me assign roles on that
+one resource only.
+
+---
+
+### Part B Summary: Permissions to Request
+
+| Permission | Scope | What It Unlocks | Risk to IT |
+|---|---|---|---|
+| `Application Developer` (Azure AD role) | Tenant | Create app registrations for OAuth/SSO | Low — can't grant admin consent or modify others' apps |
+| `Contributor` on `rg-dcri-prod-sage` | One resource group only | Deploy Container Apps, Storage, ACR | Low — fully isolated RG |
+| `User Access Administrator` on `ai-foundry-dcri-sage` | One resource only | Grant managed identity access to AI Foundry | Low — scoped to one resource |
+
+With these three, I can develop and deploy new AI agents end-to-end without an IT ticket
+for each project. All work stays in the Duke tenant and Duke Azure subscription.
 
 ---
 
 ## Questions for IT
 
-1. Should Container App go in `rg-dcri-prod-ai-foundry` or a new resource group?
+1. Should Container App go in `rg-dcri-prod-ai-foundry` or a new `rg-dcri-prod-sage`?
+   (I am requesting Contributor on the new RG as Part B above — creating it as a new
+   isolated RG makes the permission easier to scope.)
 2. Is there an existing Storage Account I can add a container to (to avoid creating a new one)?
 3. Is there a naming convention I should follow for the Container App and ACR?
-4. For the Bot App Registration (item 4), can I create it myself in portal.azure.com
-   and just ask you to review/approve, or does IT need to create it?
+4. For Part B — is `Application Developer` a role IT can grant, or does it require a
+   different process (e.g., PIM request)?
