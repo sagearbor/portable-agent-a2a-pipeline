@@ -1,0 +1,36 @@
+version: '3.8'
+
+services:
+  sagejirabot:
+    build: .
+    ports:
+      - "9000:9000"
+    environment:
+      # Azure AI Foundry (required for LLM calls)
+      - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
+      - AZURE_OPENAI_V1_BASE_URL=${AZURE_OPENAI_V1_BASE_URL}
+      # Jira credentials (required for ticket creation)
+      - JIRA_BASE_URL=${JIRA_BASE_URL}
+      - JIRA_EMAIL=${JIRA_EMAIL}
+      - JIRA_API_TOKEN=${JIRA_API_TOKEN}
+      - JIRA_PROJECT_KEY=${JIRA_PROJECT_KEY}
+      # Bot Framework (from IT after Azure Bot Service provisioned)
+      - BOT_APP_ID=${BOT_APP_ID}
+      - BOT_APP_PASSWORD=${BOT_APP_PASSWORD}
+      - BOT_DEFAULT_PROJECT=${BOT_DEFAULT_PROJECT:-ST}
+      - BOT_MAX_TICKETS_PER_RUN=${BOT_MAX_TICKETS_PER_RUN:-10}
+      - BOT_SESSION_TIMEOUT_MINUTES=${BOT_SESSION_TIMEOUT_MINUTES:-30}
+      - BOT_DRY_RUN_DEFAULT=${BOT_DRY_RUN_DEFAULT:-false}
+      - BOT_HOST=0.0.0.0
+      - BOT_PORT=9000
+    # .env file is NOT baked into the image — it is loaded at runtime
+    # For local dev: docker-compose will pick up .env automatically
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s

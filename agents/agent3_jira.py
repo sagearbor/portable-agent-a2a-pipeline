@@ -12,9 +12,10 @@ as an actual tool/function call rather than a direct Python import.
 """
 
 import json
-from clients.client import get_client
+import os
+from clients.client import get_client, token_limit_kwarg
 from config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
-from tools.jira_tool import create_ticket
+from tools.jira_tool import create_ticket, JiraCredentials
 
 AGENT_DEFINITION = {
     "name": "jira-creator",
@@ -38,13 +39,29 @@ AGENT_DEFINITION = {
 }
 
 
-def run(approved_items: list[dict]) -> list[dict]:
+def run(
+    approved_items: list[dict],
+    dry_run: bool = False,
+    jira_creds: dict | None = None,
+) -> list[dict]:
     """
     Write and create Jira tickets for all approved items from Agent 2.
-    Returns list of created ticket results.
+    Returns list of created (or drafted, if dry_run=True) ticket results.
+
+    Args:
+        approved_items: List of approved items from Agent 2 (agent2_router).
+        dry_run:        If True, skip the actual Jira API call. Returns draft
+                        results with status="draft" and a placeholder ticket_id.
+                        Use this to preview tickets without creating them.
+        jira_creds:     Optional dict of Jira credential overrides.  Keys are
+                        the same env-var names used by jira_tool:
+                        JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN,
+                        JIRA_PROJECT_KEY.  When provided these take precedence
+                        over environment variables for this call only.
     """
+    dry_label = " [DRY RUN]" if dry_run else ""
     print(f"\n{'='*60}")
-    print(f"AGENT 3 - Jira Creator  [provider: {PROVIDER}]")
+    print(f"AGENT 3 - Jira Creator  [provider: {PROVIDER}]{dry_label}")
     print(f"{'='*60}")
     print(f"[agent3] Received {len(approved_items)} approved items from Agent 2")
 
@@ -74,22 +91,48 @@ def run(approved_items: list[dict]) -> list[dict]:
                 {"role": "user",   "content": input_text},
             ],
             temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
+            **token_limit_kwarg(model, MAX_TOKENS),
         )
         raw = response.choices[0].message.content
 
     tickets_to_create = json.loads(raw)
 
-    # Call the Jira tool for each ticket
+    # Call the Jira tool for each ticket (or skip if dry_run)
     results = []
-    for ticket in tickets_to_create:
-        result = create_ticket(
-            summary=ticket["summary"],
-            description=ticket["description"],
-            priority=ticket.get("priority", "Medium"),
-        )
-        result["email_id"] = ticket["email_id"]
-        results.append(result)
-        print(f"[agent3] Created {result['ticket_id']}: {result['url']}")
+    for i, ticket in enumerate(tickets_to_create):
+        if dry_run:
+            # Return a draft result without hitting the Jira API
+            result = {
+                "ticket_id": f"DRAFT-{i}",
+                "url":       "",
+                "status":    "draft",
+                "summary":   ticket["summary"],
+                "priority":  ticket.get("priority", "Medium"),
+                "description": ticket.get("description", ""),
+            }
+            result["email_id"] = ticket.get("email_id", "")
+            results.append(result)
+            print(f"[agent3] [DRY RUN] Drafted ticket {i}: {ticket['summary'][:60]}")
+        else:
+            # Convert the optional dict of env-var-keyed overrides into the
+            # JiraCredentials dataclass that jira_tool expects.
+            credentials: JiraCredentials | None = None
+            if jira_creds:
+                credentials = JiraCredentials(
+                    base_url=jira_creds.get("JIRA_BASE_URL",    os.environ.get("JIRA_BASE_URL", "")),
+                    email=jira_creds.get("JIRA_EMAIL",          os.environ.get("JIRA_EMAIL", "")),
+                    api_token=jira_creds.get("JIRA_API_TOKEN",  os.environ.get("JIRA_API_TOKEN", "")),
+                    project_key=jira_creds.get("JIRA_PROJECT_KEY", os.environ.get("JIRA_PROJECT_KEY", "ST")),
+                )
+            result = create_ticket(
+                summary=ticket["summary"],
+                description=ticket["description"],
+                priority=ticket.get("priority", "Medium"),
+                credentials=credentials,
+            )
+            result["email_id"] = ticket.get("email_id", "")
+            result["description"] = ticket.get("description", "")
+            results.append(result)
+            print(f"[agent3] Created {result['ticket_id']}: {result['url']}")
 
     return results

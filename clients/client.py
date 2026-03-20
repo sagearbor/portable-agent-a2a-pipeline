@@ -15,16 +15,51 @@ from config.settings import PROVIDER, MODELS, AZURE_AUTH_MODE
 load_dotenv()
 
 
+def _get_azure_credential():
+    """Returns the right Azure credential based on AZURE_AUTH_MODE."""
+    if AZURE_AUTH_MODE == "az_login":
+        from azure.identity import AzureCliCredential
+        return AzureCliCredential()
+    else:
+        from azure.identity import DefaultAzureCredential
+        return DefaultAzureCredential()
+
+
+def _build_azure_responses_client():
+    """
+    Builds an OpenAI client for the Azure v1 Responses API.
+
+    Uses the /openai/v1/ base URL which:
+    - Does NOT require api_version
+    - Supports client.responses.create()
+    - Works with gpt-5.x and all newer models
+    - Token scope is https://ai.azure.com/.default (different from Chat Completions)
+
+    Requires AZURE_OPENAI_V1_BASE_URL in .env.
+    """
+    from openai import OpenAI
+    base_url = os.environ["AZURE_OPENAI_V1_BASE_URL"]
+    credential = _get_azure_credential()
+    # Get a fresh bearer token. Pipeline completes in <60s so no refresh needed.
+    token = credential.get_token("https://ai.azure.com/.default").token
+    return OpenAI(base_url=base_url, api_key=token)
+
+
 def _build_azure_client():
     """
     Builds an AzureOpenAI client using either managed identity or API key,
     controlled by AZURE_AUTH_MODE in settings.py.
 
+    az_login:
+        Uses AzureCliCredential - explicitly uses your 'az login' session.
+        Best for local dev on an Azure VM where DefaultAzureCredential would
+        pick up the VM's managed identity instead of your personal login.
+        Requires: az login to have been run.
+
     managed_identity:
-        Uses DefaultAzureCredential - no API key in .env needed.
-        Locally: picks up your 'az login' session automatically.
-        In Azure: picks up the managed identity of the resource (VM, container etc).
-        This is the recommended mode - nothing to leak or rotate.
+        Uses DefaultAzureCredential - tries managed identity before az login.
+        Use this in production containers with a managed identity assigned.
+        WARNING: on a dev VM this authenticates as the VM, not you.
 
     api_key:
         Uses AZURE_OPENAI_KEY from .env.
@@ -35,10 +70,10 @@ def _build_azure_client():
     endpoint   = os.environ["AZURE_OPENAI_ENDPOINT"]
     api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
 
-    if AZURE_AUTH_MODE == "managed_identity":
-        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+    if AZURE_AUTH_MODE in ("az_login", "managed_identity"):
+        from azure.identity import get_bearer_token_provider
         token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(),
+            _get_azure_credential(),
             "https://cognitiveservices.azure.com/.default"
         )
         return AzureOpenAI(
@@ -57,6 +92,25 @@ def _build_azure_client():
             f"Unknown AZURE_AUTH_MODE '{AZURE_AUTH_MODE}'. "
             "Valid options: 'managed_identity', 'api_key'"
         )
+
+
+def token_limit_kwarg(model: str, n: int) -> dict:
+    """
+    Returns the correct token-limit kwarg for the given model as a dict.
+
+    Newer models (o1, o3, gpt-5.x) require 'max_completion_tokens'.
+    Older models (gpt-4, gpt-3.5, gpt-4o) use 'max_tokens'.
+
+    Usage in agent code:
+        response = client.chat.completions.create(
+            model=model,
+            messages=[...],
+            **token_limit_kwarg(model, MAX_TOKENS),
+        )
+    """
+    newer = ("o1", "o3", "o4", "gpt-5")
+    key = "max_completion_tokens" if any(model.startswith(p) for p in newer) else "max_tokens"
+    return {key: n}
 
 
 def get_client():
@@ -82,19 +136,13 @@ def get_client():
 
     elif PROVIDER == "azure_responses":
         # ------------------------------------------------------------------
-        # Azure AI Foundry - Responses API
+        # Azure AI Foundry - Responses API (v1, GA as of 2026)
         # Protocol:  client.responses.create(...)
-        # Auth: same as 'azure' - uses AZURE_AUTH_MODE
-        # COMING SOON: Azure Responses API not fully available yet.
-        # When ready: same _build_azure_client() call, just needs newer api_version
-        # and .responses.create() call pattern in agent code.
+        # Safe for Duke Health / PHI-adjacent data.
+        # Uses /openai/v1/ base URL — no api_version needed.
+        # Requires AZURE_OPENAI_V1_BASE_URL in .env.
         # ------------------------------------------------------------------
-        raise NotImplementedError(
-            "PROVIDER='azure_responses' is not yet available. "
-            "Azure Responses API is still rolling out. "
-            "Use 'azure' (Chat Completions) for Duke Health data for now, "
-            "or 'openai_responses' for personal/non-PHI work."
-        )
+        return _build_azure_responses_client(), model
 
     elif PROVIDER == "openai_responses":
         # ------------------------------------------------------------------
