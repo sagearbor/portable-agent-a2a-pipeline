@@ -37,7 +37,7 @@ def _client() -> tuple[str, HTTPBasicAuth, dict]:
     return base_url, auth, headers
 
 
-def create_ticket(summary: str, description: str, priority: str = "Medium") -> dict:
+def create_ticket(summary: str, description: str, priority: str = "Medium", epic_key: str | None = None) -> dict:
     """
     Create a Jira ticket via REST API v3.
 
@@ -45,6 +45,7 @@ def create_ticket(summary: str, description: str, priority: str = "Medium") -> d
         summary:     short title for the ticket
         description: full ticket body (plain text; converted to Atlassian Doc Format)
         priority:    Critical | High | Medium | Low
+        epic_key:    optional parent epic key (e.g. 'ST-40'); sets the parent link
 
     Returns dict with keys: ticket_id, url, status, summary, priority
     """
@@ -59,6 +60,7 @@ def create_ticket(summary: str, description: str, priority: str = "Medium") -> d
             "summary":     summary,
             "issuetype":   {"name": "Task"},
             "priority":    {"name": jira_priority},
+            **( {"parent": {"key": epic_key}} if epic_key else {} ),
             "description": {
                 "type":    "doc",
                 "version": 1,
