@@ -10,7 +10,7 @@ A2A output: list of dicts, one per email, with extracted fields.
 """
 
 import json
-from clients.client import get_client
+from clients.client import get_client, token_limit_kwarg
 from config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
 from tools.outlook_tool import read_emails
 
@@ -90,7 +90,7 @@ def run(folder: str = "Inbox") -> list[dict]:
                 {"role": "user",   "content": f"Here are the emails to process:\n{email_text}"},
             ],
             temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
+            **token_limit_kwarg(model, MAX_TOKENS),
         )
         raw = response.choices[0].message.content
 

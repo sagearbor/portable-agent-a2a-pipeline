@@ -12,7 +12,7 @@ as an actual tool/function call rather than a direct Python import.
 """
 
 import json
-from clients.client import get_client
+from clients.client import get_client, token_limit_kwarg
 from config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
 from tools.jira_tool import create_ticket
 
@@ -74,7 +74,7 @@ def run(approved_items: list[dict]) -> list[dict]:
                 {"role": "user",   "content": input_text},
             ],
             temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
+            **token_limit_kwarg(model, MAX_TOKENS),
         )
         raw = response.choices[0].message.content
 

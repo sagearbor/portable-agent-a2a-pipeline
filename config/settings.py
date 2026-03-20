@@ -42,18 +42,23 @@ MODELS = {
 # ---------------------------------------------------------------------------
 # Azure authentication mode (only applies to azure / azure_responses providers)
 # ---------------------------------------------------------------------------
-# "managed_identity" - no API key needed. Uses DefaultAzureCredential which checks:
-#     1. Your 'az login' session (when running locally)
-#     2. Managed Identity (when running inside Azure: VM, App Service, Container)
-#     3. Environment variables AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / AZURE_TENANT_ID
-#   Recommended for production and for any code that may touch real data.
-#   Requires: azure-identity package (already in requirements.txt)
+# "az_login"         - uses your 'az login' session explicitly (AzureCliCredential).
+#     Best for local dev on an Azure VM, where DefaultAzureCredential would
+#     otherwise pick up the VM's managed identity instead of your personal login.
+#     Requires: az login to have been run in this terminal session.
+#
+# "managed_identity" - uses DefaultAzureCredential which checks (in order):
+#     1. Environment variables AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / AZURE_TENANT_ID
+#     2. Workload Identity
+#     3. Managed Identity (VM, App Service, Container) ← picks this up first on a VM!
+#     4. Your 'az login' session
+#   Use this in production containers where a managed identity is assigned.
+#   WARNING: on a dev VM this will authenticate as the VM's identity, not you.
 #
 # "api_key"          - uses AZURE_OPENAI_KEY from .env
 #     Simpler for quick local testing. Never commit the key.
-#     Not recommended once managed identity is working.
 #
-AZURE_AUTH_MODE = "managed_identity"  # "managed_identity" | "api_key"
+AZURE_AUTH_MODE = "az_login"  # "az_login" | "managed_identity" | "api_key"
 
 # ---------------------------------------------------------------------------
 # Temperature / shared inference settings

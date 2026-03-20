@@ -12,7 +12,7 @@ In Phase 2 this becomes a real Azure agent that receives a thread message.
 """
 
 import json
-from clients.client import get_client
+from clients.client import get_client, token_limit_kwarg
 from config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
 
 AGENT_DEFINITION = {
@@ -66,7 +66,7 @@ def run(email_extracts: list[dict]) -> list[dict]:
                 {"role": "user",   "content": input_text},
             ],
             temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
+            **token_limit_kwarg(model, MAX_TOKENS),
         )
         raw = response.choices[0].message.content
 
