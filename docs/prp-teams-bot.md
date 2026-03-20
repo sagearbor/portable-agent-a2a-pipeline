@@ -1,8 +1,8 @@
 # Product Requirements & Planning: SageJiraBot for Microsoft Teams
 
-**Document version:** 1.0
+**Document version:** 1.1
 **Date:** 2026-03-20
-**Status:** Draft — ready for implementation
+**Status:** Draft — updated with design decisions from user feedback
 **Author:** Derived from codebase analysis of `portable-agent-a2a-pipeline`
 
 ---
@@ -581,14 +581,18 @@ Send Adaptive Card to Teams channel
 
 ### 4.4 Adaptive Card Design
 
-The review card is sent to the Teams channel where the bot was invoked (or to the meeting chat). It shows a table of draft tickets with action buttons per row, plus a global "Approve All" button.
+#### Live Incremental Cards During Meeting
 
-#### ASCII Mockup
+As the meeting progresses and the bot detects action items in real time, it posts an individual Adaptive Card per detected action item directly to the meeting chat or channel. Users can react to each card — approve, edit, or delete it — as the meeting goes on, without waiting for the meeting to end.
+
+At meeting end, the bot summarizes all pending (unreviewed) draft tickets in a single summary card and offers a "Create all" button for bulk submission of any drafts that were not individually acted on.
+
+#### End-of-Meeting Summary Card ASCII Mockup
 
 ```
 +-----------------------------------------------------------------------+
 |  SageJiraBot  |  Sprint Planning 2026-03-20  |  Project: ST          |
-|  Found 3 action items. Review before creating tickets:               |
+|  3 action items pending review. Create all or review individually:   |
 +-----------------------------------------------------------------------+
 |  #  | Summary                          | Priority | Epic    | Assign  |
 |-----|----------------------------------|----------|---------|---------|
@@ -601,9 +605,22 @@ The review card is sent to the Teams channel where the bot was invoked (or to th
 |  3  | Update DB migration runbook      | Low      | OPS-7   | (none)  |
 |     | [Edit] [Delete] [Change Epic]    |          |         |         |
 +-----------------------------------------------------------------------+
-|  [ Approve All (3) ]                           [ Cancel ]            |
+|  [ Create all (3) ]                            [ Cancel ]            |
 +-----------------------------------------------------------------------+
 |  Routing reasons available: hover or expand each row                 |
++-----------------------------------------------------------------------+
+```
+
+#### Per-Item Incremental Card ASCII Mockup (posted in real time)
+
+```
++-----------------------------------------------------------------------+
+|  SageJiraBot  |  Action item detected                                |
+|  Fix login timeout issue  |  Priority: High  |  Project: ST          |
++-----------------------------------------------------------------------+
+|  Alice: "We need to fix the login timeout before next sprint."        |
++-----------------------------------------------------------------------+
+|  [ Approve ]   [ Edit ]   [ Delete ]                                 |
 +-----------------------------------------------------------------------+
 ```
 
@@ -641,8 +658,8 @@ The card is built in `bot/card_builder.py`. Key elements:
   "actions": [
     {
       "type": "Action.Submit",
-      "title": "Approve All (3)",
-      "data": {"action": "approve_all", "session_id": "uuid-here"}
+      "title": "Create all (3)",
+      "data": {"action": "create_all", "session_id": "uuid-here"}
     },
     {
       "type": "Action.Submit",
@@ -659,30 +676,32 @@ Teams Adaptive Cards 1.5 supports `Input.Text`, `Input.ChoiceSet` (dropdown), an
 
 ### 4.5 Meeting Session State Machine
 
-Each meeting interaction is a session. State transitions:
+Each meeting interaction is a session. A session is scoped to a single Jira instance URL and a single Jira project — no switching mid-session.
+
+State transitions:
 
 ```
 [IDLE]
-    | bot added to channel or meeting
+    | bot receives "use jira <url>" command
     v
-[AWAITING_TRANSCRIPT]
-    | transcript received (webhook or user pastes text)
+[AWAITING_PROJECT]
+    | bot verifies user has access to the specified Jira instance
+    | user specifies project key (or bot prompts for it)
     v
-[PROCESSING]
-    | pipeline + context enrichment running (~25 seconds)
+[LIVE_MEETING]
+    | meeting is running; bot processes live caption stream
+    | as each action item is detected:
+    |   -> run pipeline on caption segment
+    |   -> post individual Adaptive Card for that item
+    |   -> user can approve / edit / delete each card in real time
     v
-[REVIEW_PENDING]
-    | Adaptive Card sent to channel
-    | user can edit/delete rows
-    v
-[PARTIAL_EDIT] (optional)
-    | user edits a row -> card refreshes with updated data
-    v
-[APPROVED]
-    | user clicks "Approve All" or selects rows to approve
+[MEETING_ENDED]
+    | meeting ends or user runs "@SageJiraBot done"
+    | bot posts summary card of all pending (unreviewed) draft tickets
+    | with a "Create all" button for bulk submission
     v
 [CREATING]
-    | jira_tool.create_ticket() called for each approved ticket
+    | jira_tool.create_ticket() called for each approved / bulk-submitted ticket
     v
 [COMPLETE]
     | confirmation card sent with ticket URLs
@@ -690,7 +709,9 @@ Each meeting interaction is a session. State transitions:
 [IDLE]
 ```
 
-**Timeout:** Sessions expire after 30 minutes in `REVIEW_PENDING` state. Bot sends a message: "Session timed out. Run `/process` again to re-analyze the transcript."
+**Transcript paste path:** If the user pastes a transcript rather than using live captions, the bot transitions directly from `[AWAITING_PROJECT]` to `[MEETING_ENDED]`, posting the full summary card at once (no incremental cards in that case).
+
+**Timeout:** Sessions expire after 30 minutes in `[MEETING_ENDED]` / pending state. Bot sends a message: "Session timed out. Run `/process` again to re-analyze the transcript."
 
 **Session data** stored in `bot/session_store.py`:
 
@@ -699,10 +720,12 @@ Each meeting interaction is a session. State transitions:
 class BotSession:
     session_id: str          # uuid
     meeting_title: str
-    project_key: str
+    jira_base_url: str       # e.g. "https://your-org.atlassian.net" — set at session start
+    project_key: str         # single project per session, set after jira_base_url is verified
+    series_master_id: str | None  # Graph API seriesMasterId; set when meeting is recurring
     transcript: str
     draft_tickets: list[dict]
-    state: str               # IDLE | PROCESSING | REVIEW_PENDING | APPROVED | COMPLETE
+    state: str               # IDLE | AWAITING_PROJECT | LIVE_MEETING | MEETING_ENDED | CREATING | COMPLETE
     created_at: datetime
     channel_id: str          # Teams channel to post updates to
     user_id: str             # Teams user who triggered the session
@@ -761,64 +784,99 @@ Return the draft_tickets list as JSON with the new fields added.
 No explanation, just JSON.
 ```
 
-### 4.7 Permission Model: Jira Write Access Verification
+### 4.7 Permission Model: Jira Access Verification
 
-Before creating tickets, the bot verifies the requesting Teams user has permission to create issues in the target Jira project.
+At session start, after the user provides a Jira URL with `@sageJiraBot use jira <url>`, the bot verifies that the requesting Teams user has access to that Jira instance before proceeding.
 
 **Approach:**
 
-1. The bot maintains a config map: `CHANNEL_JIRA_PERMISSIONS` — a dict from Teams `channel_id` to allowed Jira usernames/email list. This is stored in `bot/teams/config.py` (or loaded from a config file, not hardcoded with secrets).
+1. When the user provides a Jira URL, the bot calls Jira API `GET /rest/api/3/myself` on that instance using the bot's service account credentials to confirm the instance is reachable.
 
-2. When a user triggers ticket creation, the bot checks:
-   - Is the `teams_user_email` (from the Teams activity) in the allowed list for this channel's project?
-   - OR: call Jira API `GET /rest/api/3/user/permission/search?projectKey=ST&permissions=CREATE_ISSUES&accountId={jira_account_id}` with the bot's service account credentials to verify dynamically.
+2. Before creating tickets, the bot calls `GET /rest/api/3/user/permission/search?projectKey=<KEY>&permissions=CREATE_ISSUES&accountId={jira_account_id}` to verify the user has create permission in the target project.
 
-3. If not authorized: bot replies "You don't have Jira CREATE_ISSUES permission for project ST. Contact your Jira admin."
+3. If the Jira instance is unreachable or the user is not authorized:
+   - Unreachable: bot replies "Cannot reach that Jira instance. Check the URL and try again."
+   - Unauthorized: bot replies "You don't have Jira CREATE_ISSUES permission for project `<KEY>`. Contact your Jira admin."
 
-**Recommended approach for Phase 2 MVP:** Use the dynamic Jira API check (option 2b), which does not require maintaining a separate permission list. The bot's Jira API token must have Browse permission on the project.
+There is no stored per-channel Jira configuration. The user must explicitly provide the Jira URL at the start of every session.
 
-### 4.8 Project Routing: How Users Specify Jira Project
+**Recommended approach for Phase 2 MVP:** Use the dynamic Jira API checks described above. No separate permission list or channel config is maintained.
 
-#### Default per channel
+### 4.8 Project Routing: How Users Specify Jira Instance and Project
 
-A channel-to-project mapping is configured at bot install time in `bot/teams/config.py`:
+The bot has no stored per-channel Jira configuration. The user must provide the Jira URL explicitly at session start and specify a Jira project. A session is scoped to one Jira instance and one Jira project — no switching mid-session.
 
-```python
-CHANNEL_PROJECT_DEFAULTS = {
-    "19:abc123@thread.tacv2": "ST",   # #sage-dev channel
-    "19:def456@thread.tacv2": "OPS",  # #operations channel
-    # add new channels here when bot is installed to a new channel
-}
+#### Session Start: Providing the Jira URL
 
-DEFAULT_PROJECT = "ST"  # fallback if channel not in map
-```
-
-#### Override with inline command
-
-Users can override with `project:KEY` anywhere in their message:
+The user begins a session by providing the Jira instance URL:
 
 ```
-@SageJiraBot process transcript project:OPS
+@sageJiraBot use jira https://your-org.atlassian.net
 ```
 
-Or when pasting a transcript:
+The bot verifies the user has access to that instance (see Section 4.7). If access is confirmed, the bot prompts for the project key if it was not included in the command:
 
 ```
-@SageJiraBot [paste transcript here] project:OPS
+> Got it. Which Jira project? (e.g. ST, OPS)
 ```
 
-The bot parses `project:([A-Z]{1,10})` from the message body using regex before passing the project key to the pipeline.
+The user can also provide both URL and project in one command:
+
+```
+@sageJiraBot use jira https://your-org.atlassian.net project ST
+```
+
+If the user attempts to process a transcript without first providing a Jira URL, the bot prompts:
+
+```
+Please specify a Jira instance first: @sageJiraBot use jira <url>
+```
+
+#### Recurring Meeting Memory
+
+When a user provides a Jira URL in a meeting that belongs to a **recurring series**, the bot detects the series (via `seriesMasterId` from the Graph API meeting object) and asks once:
+
+```
+Got it. This looks like a recurring meeting ("Weekly Standup").
+Save these Jira settings for future sessions in this series? [Yes / No]
+```
+
+If the user confirms, the bot persists:
+```json
+{ "series_master_id": "...", "jira_base_url": "...", "project_key": "ST" }
+```
+
+In future sessions of the same recurring series, after the first `@sageJiraBot` @mention, the bot auto-applies saved settings and posts:
+
+```
+Using saved Jira settings for this series: your-org.atlassian.net / ST. [Change]
+```
+
+**Storage:** A local JSON file (`bot/data/series_defaults.json`) keyed by `series_master_id`. No external database needed for MVP. Entries expire after 90 days of inactivity.
+
+**Important:** The bot still requires an explicit @mention to activate in each meeting session — Teams bots cannot join uninvited. But for recognized recurring series, setup is skipped entirely after the first session.
+
+**Commands added for series management:**
+
+| Command | Action |
+|---|---|
+| `@sageJiraBot forget series` | Clear saved defaults for the current recurring series |
+| `@sageJiraBot show series` | Display saved Jira settings for this recurring series, if any |
 
 #### Bot Commands
 
 | Command | Action |
 |---|---|
-| `@SageJiraBot help` | Show command list |
-| `@SageJiraBot process` | Process the most recent meeting transcript (fetched from Graph API) |
-| `@SageJiraBot process project:OPS` | Same, but route to OPS project |
-| `@SageJiraBot paste` | Bot prompts user to paste a transcript in the next message |
-| `@SageJiraBot status` | Show current session state if one is running |
-| `@SageJiraBot cancel` | Abort current session, discard drafts |
+| `@sageJiraBot help` | Show command list |
+| `@sageJiraBot use jira <url>` | Set the Jira instance for this session (required before processing) |
+| `@sageJiraBot use jira <url> project <KEY>` | Set Jira instance and project in one step |
+| `@sageJiraBot process` | Process the most recent meeting transcript (fetched from Graph API) |
+| `@sageJiraBot paste` | Bot prompts user to paste a transcript in the next message |
+| `@sageJiraBot status` | Show current session state if one is running |
+| `@sageJiraBot done` | Signal end of meeting; post the pending-drafts summary card |
+| `@sageJiraBot cancel` | Abort current session, discard drafts |
+| `@sageJiraBot forget series` | Clear saved Jira defaults for the current recurring meeting series |
+| `@sageJiraBot show series` | Display saved Jira settings for this recurring series |
 
 ### 4.9 Teams App Manifest
 
@@ -883,28 +941,42 @@ class SageJiraBotHandler(ActivityHandler):
 
     async def on_message_activity(self, turn_context: TurnContext):
         text = turn_context.activity.text.strip()
+        user_id = turn_context.activity.from_property.id
 
-        # Parse project key override
-        project_match = re.search(r'project:([A-Z]{1,10})', text, re.IGNORECASE)
-        project_key = project_match.group(1).upper() if project_match else self._get_default_project(turn_context)
+        # Session start: user provides Jira URL
+        use_jira_match = re.search(r'use jira (https?://\S+)', text, re.IGNORECASE)
+        if use_jira_match:
+            jira_url = use_jira_match.group(1).rstrip('/')
+            project_match = re.search(r'project ([A-Z]{1,10})', text, re.IGNORECASE)
+            project_key = project_match.group(1).upper() if project_match else None
+            await self._handle_use_jira(turn_context, jira_url, project_key)
+            return
 
         if 'process' in text.lower():
-            await self._handle_process_command(turn_context, project_key)
+            session = session_store.get_active_session(user_id)
+            if not session or not session.jira_base_url:
+                await turn_context.send_activity(MessageFactory.text(
+                    "Please specify a Jira instance first: `@sageJiraBot use jira <url>`"
+                ))
+                return
+            await self._handle_process_command(turn_context, session)
         elif 'paste' in text.lower():
             await self._handle_paste_prompt(turn_context)
+        elif 'done' in text.lower():
+            await self._handle_meeting_done(turn_context)
         elif 'status' in text.lower():
             await self._handle_status(turn_context)
         elif 'cancel' in text.lower():
             await self._handle_cancel(turn_context)
         else:
             # Check if this is a transcript paste (long message after a 'paste' prompt)
-            session = session_store.get_active_paste_session(turn_context.activity.from_property.id)
+            session = session_store.get_active_session(user_id)
             if session and session.state == 'AWAITING_PASTE':
-                await self._run_pipeline_on_text(turn_context, text, project_key)
+                await self._run_pipeline_on_text(turn_context, text, session)
             else:
                 await turn_context.send_activity(MessageFactory.text(
-                    "Hi! I'm SageJiraBot. Use `process` to analyze your latest meeting transcript, "
-                    "or `paste` to paste a transcript. Type `help` for all commands."
+                    "Hi! I'm SageJiraBot. Start with `use jira <url>` to set your Jira instance, "
+                    "then use `process` or `paste` to create tickets. Type `help` for all commands."
                 ))
 
     async def on_reactions_added(self, message_reactions, turn_context: TurnContext):
@@ -989,7 +1061,15 @@ This makes the system accessible to anyone who can run a curl command, regardles
 
 ## 6. IT Dependencies
 
-The following items require IT involvement before Phase 2 can be deployed. Phase 1 (FastAPI endpoint) requires none of these — it runs entirely on the existing Unix VM with existing credentials.
+**Important:** The Teams bot code (Phase 2) is complete and ready for deployment, but cannot be activated in Microsoft Teams until three IT-gated steps are completed:
+
+1. **Azure Bot Service provisioning** — IT must create a Bot Service resource in the DCRI subscription and provide the Bot App ID and credential.
+2. **Teams app admin approval** — The SageJiraBot manifest must be submitted to and approved by Teams Admin Center before the bot can be installed in any Teams channel.
+3. **Azure AD app registration** — An app registration with the required Graph API permissions must be created and admin consent granted.
+
+None of these steps can be performed by the developer without IT involvement. The FastAPI pipeline endpoint (Phase 1) is unaffected and runs entirely on the existing Unix VM with existing credentials.
+
+The following items require IT involvement before Phase 2 can be deployed.
 
 ### 6.1 Items to Request from IT
 
@@ -1209,9 +1289,10 @@ AZURE_STORAGE_ACCOUNT_NAME=        # only needed when SESSION_BACKEND=azure_tabl
 AZURE_STORAGE_TABLE_NAME=sagebotSessions
 
 # ---- Bot behavior tuning ----
-BOT_DEFAULT_PROJECT=ST             # fallback Jira project if channel not configured
+# NOTE: There is no per-channel Jira default. Users must provide a Jira URL
+# at session start with: @sageJiraBot use jira <url>
 BOT_MAX_TICKETS_PER_RUN=10        # safety cap
-BOT_SESSION_TIMEOUT_MINUTES=30    # how long REVIEW_PENDING sessions live
+BOT_SESSION_TIMEOUT_MINUTES=30    # how long pending sessions live before expiry
 BOT_DRY_RUN_DEFAULT=false         # set true during testing to avoid creating real tickets
 ```
 
@@ -1222,10 +1303,10 @@ BOT_APP_ID=                        # from IT after Azure Bot Service provisioned
 BOT_APP_PASSWORD=                  # from IT (or use managed identity — see docs)
 GRAPH_TENANT_ID=cb72c54e-4a31-4d9e-b14a-1ea36dfac94c
 SESSION_BACKEND=memory
-BOT_DEFAULT_PROJECT=ST
 BOT_MAX_TICKETS_PER_RUN=10
 BOT_SESSION_TIMEOUT_MINUTES=30
 BOT_DRY_RUN_DEFAULT=false
+# No BOT_DEFAULT_PROJECT — Jira URL and project are always set explicitly by the user at session start
 ```
 
 ---

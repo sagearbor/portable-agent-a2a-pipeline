@@ -113,3 +113,19 @@ import pathlib as _pathlib
 _web_dir = _pathlib.Path(__file__).parent.parent / "web"
 if _web_dir.is_dir():
     app.mount("/", StaticFiles(directory=str(_web_dir), html=True), name="web")
+
+
+# ---------------------------------------------------------------------------
+# Entry point — reads BOT_PORT from .env when run directly
+# ---------------------------------------------------------------------------
+# Run with:  python bot/api/main.py
+# Override:  BOT_PORT=3006 python bot/api/main.py
+#
+# When using uvicorn CLI directly, pass --port explicitly:
+#   python -m uvicorn bot.api.main:app --port 3006
+# (uvicorn CLI does not read BOT_PORT from .env automatically)
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("BOT_PORT", "9000"))
+    uvicorn.run("bot.api.main:app", host="0.0.0.0", port=port, reload=False)
