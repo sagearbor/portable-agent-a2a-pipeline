@@ -529,6 +529,72 @@
     }
 
     /* -----------------------------------------------------------------------
+       Tooltip system
+    ----------------------------------------------------------------------- */
+    .tooltip-wrap { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+    .info-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 14px; height: 14px; border-radius: 50%;
+      background: #c8cdd9; color: #fff; font-size: 9px; font-weight: 700;
+      cursor: default; user-select: none; flex-shrink: 0;
+      position: relative;
+    }
+    .info-icon::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1a1d23;
+      color: #e8eaf0;
+      font-size: 11px;
+      font-weight: 400;
+      padding: 6px 10px;
+      border-radius: 4px;
+      white-space: pre-line;
+      width: max-content;
+      max-width: 260px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 100;
+      line-height: 1.5;
+    }
+    .info-icon:hover::after { opacity: 1; }
+
+    /* -----------------------------------------------------------------------
+       Server-credentials notice
+    ----------------------------------------------------------------------- */
+    .server-cred-notice {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 6px;
+    }
+
+    /* -----------------------------------------------------------------------
+       SSO coming-soon box
+    ----------------------------------------------------------------------- */
+    .sso-box {
+      margin-top: 20px;
+      background: #f8f9fd;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      color: #6b7390;
+      font-size: 12px;
+      line-height: 1.6;
+    }
+    .sso-box .sso-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: #4a5066;
+      margin-bottom: 6px;
+    }
+
+    /* -----------------------------------------------------------------------
        Utility
     ----------------------------------------------------------------------- */
     .mt-12 { margin-top: 12px; }
@@ -577,23 +643,24 @@
   ----------------------------------------------------------------------- -->
   <div class="card" id="section-connect">
     <h2>Step 1 — Connect to Jira</h2>
-    <p class="subtitle">Enter your Jira credentials to load the projects you have access to.</p>
+    <p class="subtitle">Verify the Jira instance URL and load available projects.</p>
 
     <div class="form-row single">
       <div class="field">
-        <label for="jira-base-url">Jira Base URL</label>
+        <label for="jira-base-url">
+          <span class="tooltip-wrap">
+            Jira Base URL
+            <span class="info-icon" data-tip="The root URL of your Atlassian Jira instance.&#10;Default: https://dcri.atlassian.net">ⓘ</span>
+          </span>
+        </label>
         <input type="text" id="jira-base-url" value="https://dcri.atlassian.net" placeholder="https://yourorg.atlassian.net" />
-      </div>
-    </div>
-
-    <div class="form-row">
-      <div class="field">
-        <label for="jira-email">Jira Email</label>
-        <input type="text" id="jira-email" placeholder="you@example.com" autocomplete="username" />
-      </div>
-      <div class="field">
-        <label for="jira-token">Jira API Token</label>
-        <input type="password" id="jira-token" placeholder="Paste API token here" autocomplete="current-password" />
+        <div class="server-cred-notice">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <rect x="2" y="7" width="12" height="8" rx="1.5" stroke="#8b90a0" stroke-width="1.5"/>
+            <path d="M5 7V5a3 3 0 0 1 6 0v2" stroke="#8b90a0" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+          Connecting with server service account
+        </div>
       </div>
     </div>
 
@@ -606,6 +673,14 @@
     </div>
 
     <div class="alert alert-error" id="connect-error"></div>
+
+    <!-- SSO placeholder -->
+    <div class="sso-box">
+      <div class="sso-title">&#128272; Single Sign-On (Coming Soon)</div>
+      Duke employees will sign in with their Duke NetID to verify identity.<br>
+      Projects will be filtered to those you personally have access to.<br>
+      Requires IT to provision an Azure AD app registration — see <code>docs/design-jira-auth.md</code>.
+    </div>
   </div>
 
   <!-- -----------------------------------------------------------------------
@@ -613,7 +688,7 @@
   ----------------------------------------------------------------------- -->
   <div class="card" id="section-transcript">
     <h2>Step 2 — Provide Transcript</h2>
-    <p class="subtitle">Drop a .txt / .vtt / .srt file, or paste transcript text directly.</p>
+    <p class="subtitle">Drop a .txt / .vtt / .srt file or paste text. Supports Teams VTT transcripts, Webex .txt exports, and plain conversation text.</p>
 
     <!-- Drag-drop zone -->
     <div id="drop-zone">
@@ -631,16 +706,27 @@
     <!-- Metadata & project selection -->
     <div class="transcript-meta">
       <div class="field">
-        <label for="meeting-title">Meeting Title (optional)</label>
+        <label for="meeting-title">
+          <span class="tooltip-wrap">
+            Meeting Title (optional)
+            <span class="info-icon" data-tip="Used to give context to the AI when generating ticket descriptions.&#10;Also appears in ticket comments to indicate which meeting originated the request.&#10;Example: &quot;Sprint Planning — March 2026&quot;">ⓘ</span>
+          </span>
+        </label>
         <input type="text" id="meeting-title" placeholder="e.g. Sprint Planning — March 2026" />
       </div>
       <div class="field">
-        <label for="project-select">Jira Project</label>
+        <label for="project-select">
+          <span class="tooltip-wrap">
+            Jira Project
+            <span class="info-icon" data-tip="The project where tickets will be created.&#10;You must have &quot;Create Issues&quot; permission in the selected project.">ⓘ</span>
+          </span>
+        </label>
         <select id="project-select" disabled>
           <option value="">— connect first —</option>
         </select>
       </div>
-      <button class="btn btn-primary" id="btn-analyze" disabled>
+      <button class="btn btn-primary" id="btn-analyze" disabled
+        title="Sends transcript to the AI pipeline. Tickets are shown as drafts first — nothing is created in Jira until you click 'Create Selected Tickets'.">
         Analyze Transcript
       </button>
     </div>
@@ -689,8 +775,6 @@
 const state = {
   connected: false,
   baseUrl:   '',
-  email:     '',
-  token:     '',
   projectKey: '',
   transcriptText: '',
   draftTickets: [],   // [{summary, priority, description, email_id, checked, deleted}]
@@ -745,6 +829,19 @@ function updateNavSteps() {
 /* =========================================================================
    Section 1 — Connect
 ========================================================================= */
+
+// Normalize the base URL on blur: strip to scheme + hostname only
+document.getElementById('jira-base-url').addEventListener('blur', function () {
+  const raw = this.value.trim();
+  if (!raw) return;
+  try {
+    const url = new URL(raw);
+    this.value = `${url.protocol}//${url.hostname}`;
+  } catch (_) {
+    // Not a valid URL yet — leave as-is so the user can keep typing
+  }
+});
+
 document.getElementById('btn-connect').addEventListener('click', async () => {
   const btn      = document.getElementById('btn-connect');
   const errEl    = document.getElementById('connect-error');
@@ -756,22 +853,21 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
   setLoading(btn, true);
 
   const baseUrl = document.getElementById('jira-base-url').value.trim().replace(/\/$/, '');
-  const email   = document.getElementById('jira-email').value.trim();
-  const token   = document.getElementById('jira-token').value.trim();
 
-  if (!baseUrl || !email || !token) {
-    showAlert(errEl, 'Please fill in all three fields: Base URL, Email, and API Token.');
+  if (!baseUrl) {
+    showAlert(errEl, 'Please enter the Jira Base URL.');
     setLoading(btn, false);
     return;
   }
 
   try {
-    const params = new URLSearchParams({ base_url: baseUrl, email, token });
+    // No email/token sent — server uses its service account credentials
+    const params = new URLSearchParams({ base_url: baseUrl });
     const resp   = await fetch(`/api/v1/jira/projects?${params}`);
 
     if (resp.status === 401) {
       const data = await resp.json().catch(() => ({}));
-      throw new Error(data.detail || 'Invalid credentials — check your email and API token.');
+      throw new Error(data.detail || 'Server credentials are invalid — contact an administrator.');
     }
 
     if (!resp.ok) {
@@ -794,8 +890,6 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
     // Update state
     state.connected = true;
     state.baseUrl   = baseUrl;
-    state.email     = email;
-    state.token     = token;
 
     // UI feedback
     dot.classList.add('connected');
@@ -909,13 +1003,13 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
   try {
     const payload = {
       transcript,
-      project_key:    state.projectKey,
-      meeting_title:  meetingTitle,
-      dry_run:        true,
-      jira_base_url:  state.baseUrl,
-      jira_email:     state.email,
-      jira_api_token: state.token,
+      project_key:      state.projectKey,
+      meeting_title:    meetingTitle,
+      dry_run:          true,
+      jira_base_url:    state.baseUrl,
       jira_project_key: state.projectKey,
+      // jira_email and jira_api_token are intentionally omitted — the
+      // server uses its service-account credentials from env vars.
     };
 
     const resp = await fetch('/api/v1/process-transcript', {
@@ -1109,33 +1203,17 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
   // Submit tickets one at a time so we can report per-ticket status
   for (const ticket of selected) {
     try {
-      const payload = {
-        transcript:      ticket.description + '\n\n' + ticket.summary,
-        project_key:     state.projectKey,
-        meeting_title:   ticket.summary,
-        dry_run:         false,
-        jira_base_url:   state.baseUrl,
-        jira_email:      state.email,
-        jira_api_token:  state.token,
-        jira_project_key: state.projectKey,
-        // Pass pre-authored ticket directly via the single-item path
-        _prebuilt_summary:     ticket.summary,
-        _prebuilt_description: ticket.description,
-        _prebuilt_priority:    ticket.priority,
-      };
-
       // Use the submit endpoint (individual ticket creation)
       const resp = await fetch('/api/v1/submit-ticket', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
-          summary:     ticket.summary,
-          description: ticket.description,
-          priority:    ticket.priority,
-          project_key: state.projectKey,
-          jira_base_url:   state.baseUrl,
-          jira_email:      state.email,
-          jira_api_token:  state.token,
+          summary:      ticket.summary,
+          description:  ticket.description,
+          priority:     ticket.priority,
+          project_key:  state.projectKey,
+          jira_base_url: state.baseUrl,
+          // jira_email and jira_api_token omitted — server uses env var service account
         }),
       });
 
@@ -1181,7 +1259,7 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
   } else if (created > 0) {
     showAlert(successEl, `${created} ticket${created !== 1 ? 's' : ''} created. ${failed} failed — see error badges above.`);
   } else {
-    showAlert(errEl, `Failed to create tickets. Check your credentials and Jira project settings.`);
+    showAlert(errEl, `Failed to create tickets. Check server credentials and Jira project settings.`);
   }
 
   setLoading(btn, false);

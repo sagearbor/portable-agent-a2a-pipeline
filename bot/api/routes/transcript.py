@@ -31,6 +31,9 @@ class TranscriptRequest(BaseModel):
     dry_run: bool = False
     # Optional credential overrides — when provided these take precedence
     # over the corresponding JIRA_* environment variables.
+    # The web UI no longer sends jira_email / jira_api_token; those fields
+    # are kept here for backward compatibility but default to None so the
+    # server falls back to env vars (server service account).
     jira_base_url:   str | None = None
     jira_email:      str | None = None
     jira_api_token:  str | None = None
@@ -208,7 +211,8 @@ class SubmitTicketRequest(BaseModel):
     description: str
     priority:    str = "Medium"
     project_key: str = "ST"
-    # Optional credential overrides (same semantics as TranscriptRequest)
+    # Optional credential overrides (same semantics as TranscriptRequest).
+    # The web UI no longer sends these; server falls back to env vars when None.
     jira_base_url:  str | None = None
     jira_email:     str | None = None
     jira_api_token: str | None = None
