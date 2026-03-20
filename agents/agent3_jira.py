@@ -38,13 +38,20 @@ AGENT_DEFINITION = {
 }
 
 
-def run(approved_items: list[dict]) -> list[dict]:
+def run(approved_items: list[dict], dry_run: bool = False) -> list[dict]:
     """
     Write and create Jira tickets for all approved items from Agent 2.
-    Returns list of created ticket results.
+    Returns list of created (or drafted, if dry_run=True) ticket results.
+
+    Args:
+        approved_items: List of approved items from Agent 2 (agent2_router).
+        dry_run:        If True, skip the actual Jira API call. Returns draft
+                        results with status="draft" and a placeholder ticket_id.
+                        Use this to preview tickets without creating them.
     """
+    dry_label = " [DRY RUN]" if dry_run else ""
     print(f"\n{'='*60}")
-    print(f"AGENT 3 - Jira Creator  [provider: {PROVIDER}]")
+    print(f"AGENT 3 - Jira Creator  [provider: {PROVIDER}]{dry_label}")
     print(f"{'='*60}")
     print(f"[agent3] Received {len(approved_items)} approved items from Agent 2")
 
@@ -80,16 +87,31 @@ def run(approved_items: list[dict]) -> list[dict]:
 
     tickets_to_create = json.loads(raw)
 
-    # Call the Jira tool for each ticket
+    # Call the Jira tool for each ticket (or skip if dry_run)
     results = []
-    for ticket in tickets_to_create:
-        result = create_ticket(
-            summary=ticket["summary"],
-            description=ticket["description"],
-            priority=ticket.get("priority", "Medium"),
-        )
-        result["email_id"] = ticket["email_id"]
-        results.append(result)
-        print(f"[agent3] Created {result['ticket_id']}: {result['url']}")
+    for i, ticket in enumerate(tickets_to_create):
+        if dry_run:
+            # Return a draft result without hitting the Jira API
+            result = {
+                "ticket_id": f"DRAFT-{i}",
+                "url":       "",
+                "status":    "draft",
+                "summary":   ticket["summary"],
+                "priority":  ticket.get("priority", "Medium"),
+                "description": ticket.get("description", ""),
+            }
+            result["email_id"] = ticket.get("email_id", "")
+            results.append(result)
+            print(f"[agent3] [DRY RUN] Drafted ticket {i}: {ticket['summary'][:60]}")
+        else:
+            result = create_ticket(
+                summary=ticket["summary"],
+                description=ticket["description"],
+                priority=ticket.get("priority", "Medium"),
+            )
+            result["email_id"] = ticket.get("email_id", "")
+            result["description"] = ticket.get("description", "")
+            results.append(result)
+            print(f"[agent3] Created {result['ticket_id']}: {result['url']}")
 
     return results

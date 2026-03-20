@@ -37,20 +37,8 @@ AGENT_DEFINITION = {
 }
 
 
-def run(folder: str = "Inbox") -> list[dict]:
-    """
-    Read emails from folder, extract structured data via LLM.
-    Returns list of extracted email dicts for Agent 2.
-    """
-    print(f"\n{'='*60}")
-    print(f"AGENT 1 - Email Reader  [provider: {PROVIDER}]")
-    print(f"{'='*60}")
-
-    # Step 1: fetch emails via tool
-    emails = read_emails(folder=folder)
-    print(f"[agent1] Fetched {len(emails)} emails from '{folder}'")
-
-    # Step 2: format emails into a prompt
+def _format_emails_text(emails: list[dict]) -> str:
+    """Format a list of email dicts into a prompt-friendly text block."""
     email_text = ""
     for i, email in enumerate(emails, 1):
         email_text += (
@@ -60,8 +48,18 @@ def run(folder: str = "Inbox") -> list[dict]:
             f"Subject: {email['subject']}\n"
             f"Body: {email['body']}\n"
         )
+    return email_text
 
-    # Step 3: call LLM to extract structured data
+
+def _extract_from_emails(emails: list[dict]) -> list[dict]:
+    """
+    Core extraction logic: call LLM on a list of email dicts and
+    return structured extraction results.
+
+    Shared by both run() and run_on_items().
+    """
+    email_text = _format_emails_text(emails)
+
     client, model = get_client()
     print(f"[agent1] Calling LLM ({model}) to extract structure...")
 
@@ -94,7 +92,47 @@ def run(folder: str = "Inbox") -> list[dict]:
         )
         raw = response.choices[0].message.content
 
-    # Step 4: parse JSON response
-    extracted = json.loads(raw)
+    # Strip markdown code fences if LLM wraps output in ```json ... ```
+    stripped = raw.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[-1]
+        stripped = stripped.rsplit("```", 1)[0].strip()
+
+    extracted = json.loads(stripped)
     print(f"[agent1] Extracted {len(extracted)} email records")
     return extracted
+
+
+def run_on_items(items: list[dict]) -> list[dict]:
+    """
+    Extract structured data from pre-fetched email-shaped dicts via LLM.
+    Skips the Outlook fetch step — used by the transcript pipeline where
+    bot/adapters/transcript_adapter.py has already produced the input dicts.
+
+    Args:
+        items: List of dicts with keys: id, sender, subject, body
+               (same format produced by tools/outlook_tool.read_emails)
+
+    Returns list of extracted email dicts for Agent 2.
+    """
+    print(f"\n{'='*60}")
+    print(f"AGENT 1 - Email Reader (pre-fetched items)  [provider: {PROVIDER}]")
+    print(f"{'='*60}")
+    print(f"[agent1] Received {len(items)} pre-fetched items (skipping Outlook fetch)")
+    return _extract_from_emails(items)
+
+
+def run(folder: str = "Inbox") -> list[dict]:
+    """
+    Read emails from folder, extract structured data via LLM.
+    Returns list of extracted email dicts for Agent 2.
+    """
+    print(f"\n{'='*60}")
+    print(f"AGENT 1 - Email Reader  [provider: {PROVIDER}]")
+    print(f"{'='*60}")
+
+    # Step 1: fetch emails via tool
+    emails = read_emails(folder=folder)
+    print(f"[agent1] Fetched {len(emails)} emails from '{folder}'")
+
+    return _extract_from_emails(emails)
