@@ -15,6 +15,36 @@ from config.settings import PROVIDER, MODELS, AZURE_AUTH_MODE
 load_dotenv()
 
 
+def _get_azure_credential():
+    """Returns the right Azure credential based on AZURE_AUTH_MODE."""
+    if AZURE_AUTH_MODE == "az_login":
+        from azure.identity import AzureCliCredential
+        return AzureCliCredential()
+    else:
+        from azure.identity import DefaultAzureCredential
+        return DefaultAzureCredential()
+
+
+def _build_azure_responses_client():
+    """
+    Builds an OpenAI client for the Azure v1 Responses API.
+
+    Uses the /openai/v1/ base URL which:
+    - Does NOT require api_version
+    - Supports client.responses.create()
+    - Works with gpt-5.x and all newer models
+    - Token scope is https://ai.azure.com/.default (different from Chat Completions)
+
+    Requires AZURE_OPENAI_V1_BASE_URL in .env.
+    """
+    from openai import OpenAI
+    base_url = os.environ["AZURE_OPENAI_V1_BASE_URL"]
+    credential = _get_azure_credential()
+    # Get a fresh bearer token. Pipeline completes in <60s so no refresh needed.
+    token = credential.get_token("https://ai.azure.com/.default").token
+    return OpenAI(base_url=base_url, api_key=token)
+
+
 def _build_azure_client():
     """
     Builds an AzureOpenAI client using either managed identity or API key,
@@ -40,21 +70,10 @@ def _build_azure_client():
     endpoint   = os.environ["AZURE_OPENAI_ENDPOINT"]
     api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
 
-    if AZURE_AUTH_MODE == "az_login":
-        from azure.identity import AzureCliCredential, get_bearer_token_provider
+    if AZURE_AUTH_MODE in ("az_login", "managed_identity"):
+        from azure.identity import get_bearer_token_provider
         token_provider = get_bearer_token_provider(
-            AzureCliCredential(),
-            "https://cognitiveservices.azure.com/.default"
-        )
-        return AzureOpenAI(
-            azure_endpoint=endpoint,
-            azure_ad_token_provider=token_provider,
-            api_version=api_version,
-        )
-    elif AZURE_AUTH_MODE == "managed_identity":
-        from azure.identity import DefaultAzureCredential, get_bearer_token_provider
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(),
+            _get_azure_credential(),
             "https://cognitiveservices.azure.com/.default"
         )
         return AzureOpenAI(
@@ -117,19 +136,13 @@ def get_client():
 
     elif PROVIDER == "azure_responses":
         # ------------------------------------------------------------------
-        # Azure AI Foundry - Responses API
+        # Azure AI Foundry - Responses API (v1, GA as of 2026)
         # Protocol:  client.responses.create(...)
-        # Auth: same as 'azure' - uses AZURE_AUTH_MODE
-        # COMING SOON: Azure Responses API not fully available yet.
-        # When ready: same _build_azure_client() call, just needs newer api_version
-        # and .responses.create() call pattern in agent code.
+        # Safe for Duke Health / PHI-adjacent data.
+        # Uses /openai/v1/ base URL — no api_version needed.
+        # Requires AZURE_OPENAI_V1_BASE_URL in .env.
         # ------------------------------------------------------------------
-        raise NotImplementedError(
-            "PROVIDER='azure_responses' is not yet available. "
-            "Azure Responses API is still rolling out. "
-            "Use 'azure' (Chat Completions) for Duke Health data for now, "
-            "or 'openai_responses' for personal/non-PHI work."
-        )
+        return _build_azure_responses_client(), model
 
     elif PROVIDER == "openai_responses":
         # ------------------------------------------------------------------

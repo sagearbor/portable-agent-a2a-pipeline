@@ -8,10 +8,11 @@ Options:
                         Data stays inside Duke Health tenant.
                         Works with your foundry today.
 
-  "azure_responses"   - Azure AI Foundry endpoint, Responses API protocol
+  "azure_responses"   - Azure AI Foundry endpoint, Responses API (v1, GA 2026)
                         Safe for Duke Health data + stateful threads.
-                        NOT YET VALID - Azure Responses API not fully available.
-                        Will raise NotImplementedError until Azure catches up.
+                        Uses /openai/v1/ base URL — no api_version needed.
+                        Requires AZURE_OPENAI_V1_BASE_URL in .env.
+                        Supports gpt-5.x and all modern models.
 
   "openai_responses"  - OpenAI.com endpoint, Responses API protocol
                         Stateful threads: only new message sent after turn 1.
