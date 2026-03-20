@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SageJiraBot — Transcript Processor</title>
+  <!-- MSAL.js 2.x — Azure AD authentication for the SSO sign-in section -->
+  <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"
+          integrity="sha384-DyTmrI62MAdgc25eDND3rgXLoQm8p7vWExNrhlEkwQ9FtMQIoP2n0zTflVr609Lc"
+          crossorigin="anonymous"></script>
   <style>
     /* -----------------------------------------------------------------------
        Reset & base
@@ -575,7 +579,7 @@
     }
 
     /* -----------------------------------------------------------------------
-       SSO coming-soon box
+       SSO — disabled placeholder box (shown when AZURE_AD_CLIENT_ID not set)
     ----------------------------------------------------------------------- */
     .sso-box {
       margin-top: 20px;
@@ -586,12 +590,78 @@
       color: #6b7390;
       font-size: 12px;
       line-height: 1.6;
+      display: none; /* hidden by default; shown by initSSO() when sso_enabled=false */
     }
     .sso-box .sso-title {
       font-size: 13px;
       font-weight: 600;
       color: #4a5066;
       margin-bottom: 6px;
+    }
+
+    /* -----------------------------------------------------------------------
+       SSO — active section (shown when AZURE_AD_CLIENT_ID is configured)
+    ----------------------------------------------------------------------- */
+    .sso-section { margin-top: 16px; }
+    .sso-divider {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+      margin-bottom: 12px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .sso-desc { font-size: 12px; color: var(--text-muted); margin-bottom: 10px; }
+    .btn-sso {
+      background: #fff;
+      color: #2d3142;
+      border: 1px solid var(--border);
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 4px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: box-shadow 0.15s;
+    }
+    .btn-sso:hover { box-shadow: 0 1px 4px rgba(0,0,0,0.18); }
+    .sso-user-badge {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      background: #f0f7f0;
+      border: 1px solid #bde8c0;
+      border-radius: var(--radius);
+    }
+    .sso-avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: var(--success);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      font-weight: 700;
+      flex-shrink: 0;
+    }
+    .sso-name  { font-size: 13px; font-weight: 600; }
+    .sso-email { font-size: 11px; color: var(--text-muted); }
+    .btn-link {
+      background: none;
+      border: none;
+      color: var(--accent);
+      font-size: 12px;
+      cursor: pointer;
+      margin-left: auto;
+      padding: 0;
+      text-decoration: underline;
     }
 
     /* -----------------------------------------------------------------------
@@ -674,12 +744,44 @@
 
     <div class="alert alert-error" id="connect-error"></div>
 
-    <!-- SSO placeholder -->
-    <div class="sso-box">
-      <div class="sso-title">&#128272; Single Sign-On (Coming Soon)</div>
-      Duke employees will sign in with their Duke NetID to verify identity.<br>
-      Projects will be filtered to those you personally have access to.<br>
-      Requires IT to provision an Azure AD app registration — see <code>docs/design-jira-auth.md</code>.
+    <!-- SSO: active section — shown when AZURE_AD_CLIENT_ID is configured -->
+    <div id="sso-section" style="display:none;" class="sso-section">
+      <div class="sso-divider">Identity Verification</div>
+
+      <!-- Signed-out state -->
+      <div id="sso-signed-out">
+        <p class="sso-desc">Sign in with your Duke account to verify your identity. Your name will be attributed to created tickets.</p>
+        <button class="btn btn-sso" id="btn-sso-signin">
+          <!-- Microsoft logo: four coloured squares -->
+          <svg width="16" height="16" viewBox="0 0 21 21" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect x="1"  y="1"  width="9" height="9" fill="#f25022"/>
+            <rect x="11" y="1"  width="9" height="9" fill="#7fba00"/>
+            <rect x="1"  y="11" width="9" height="9" fill="#00a4ef"/>
+            <rect x="11" y="11" width="9" height="9" fill="#ffb900"/>
+          </svg>
+          Sign in with Duke
+        </button>
+      </div>
+
+      <!-- Signed-in state -->
+      <div id="sso-signed-in" style="display:none;">
+        <div class="sso-user-badge">
+          <div class="sso-avatar" id="sso-avatar">?</div>
+          <div>
+            <div class="sso-name"  id="sso-name">&#8212;</div>
+            <div class="sso-email" id="sso-email">&#8212;</div>
+          </div>
+          <button class="btn btn-link" id="btn-sso-signout">Sign out</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- SSO: disabled placeholder — shown when AZURE_AD_CLIENT_ID is not configured -->
+    <div id="sso-disabled" class="sso-box">
+      <div class="sso-title">&#128272; Single Sign-On (Requires Setup)</div>
+      Duke NetID sign-in is available once an Azure AD app is registered.
+      See <code>docs/design-jira-auth.md</code> for IT instructions.
+      Until then, the server service account is used for all Jira operations.
     </div>
   </div>
 
@@ -778,6 +880,7 @@ const state = {
   projectKey: '',
   transcriptText: '',
   draftTickets: [],   // [{summary, priority, description, email_id, checked, deleted}]
+  ssoUser: null,      // {email, name, valid} when signed in via Azure AD SSO; null otherwise
 };
 
 /* =========================================================================
@@ -1264,6 +1367,132 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
 
   setLoading(btn, false);
 });
+
+/* =========================================================================
+   Azure AD SSO — MSAL.js
+   Activated when the server returns sso_enabled: true from /api/auth/config.
+   Requires AZURE_AD_CLIENT_ID + AZURE_AD_TENANT_ID in server .env.
+
+   Sign-in is optional — if the user skips it the app works normally using
+   the server service account for all Jira operations.  When signed in,
+   state.ssoUser is populated for attribution purposes.
+========================================================================= */
+let msalInstance = null;
+
+async function initSSO() {
+  try {
+    const resp = await fetch('/api/auth/config');
+    if (!resp.ok) return;
+    const config = await resp.json();
+
+    if (!config.sso_enabled) {
+      document.getElementById('sso-disabled').style.display = 'block';
+      document.getElementById('sso-section').style.display  = 'none';
+      return;
+    }
+
+    // SSO is enabled — show sign-in section, keep disabled notice hidden
+    document.getElementById('sso-section').style.display  = 'block';
+    document.getElementById('sso-disabled').style.display = 'none';
+
+    // Initialize MSAL
+    msalInstance = new msal.PublicClientApplication({
+      auth: {
+        clientId:    config.client_id,
+        authority:   `https://login.microsoftonline.com/${config.tenant_id}`,
+        redirectUri: window.location.origin,
+      },
+      cache: { cacheLocation: 'sessionStorage', storeAuthStateInCookie: false },
+    });
+
+    await msalInstance.initialize();
+
+    // Handle redirect result if the user was sent back here after loginRedirect
+    const result = await msalInstance.handleRedirectPromise();
+    if (result) {
+      await handleSignInResult(result);
+    } else {
+      // Restore session from cache if the user was already signed in
+      const accounts = msalInstance.getAllAccounts();
+      if (accounts.length > 0) {
+        msalInstance.setActiveAccount(accounts[0]);
+        showSignedIn(accounts[0]);
+      }
+    }
+  } catch (e) {
+    console.warn('SSO init failed:', e);
+  }
+}
+
+async function handleSignInResult(result) {
+  if (!result || !result.account) return;
+  msalInstance.setActiveAccount(result.account);
+
+  // Validate token server-side so the server can trust the identity
+  try {
+    const verifyResp = await fetch('/api/auth/verify', {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify({ id_token: result.idToken }),
+    });
+    if (verifyResp.ok) {
+      const user = await verifyResp.json();
+      state.ssoUser = user;   // { email, name, valid }
+    }
+  } catch (e) {
+    console.warn('Token verification failed:', e);
+  }
+
+  showSignedIn(result.account);
+}
+
+function showSignedIn(account) {
+  const name    = account.name || account.username;
+  const email   = account.username;
+  const initial = (name || email || '?')[0].toUpperCase();
+
+  document.getElementById('sso-avatar').textContent = initial;
+  document.getElementById('sso-name').textContent   = name || email;
+  document.getElementById('sso-email').textContent  = email;
+  document.getElementById('sso-signed-out').style.display = 'none';
+  document.getElementById('sso-signed-in').style.display  = 'flex';
+
+  if (!state.ssoUser) {
+    state.ssoUser = { email, name, valid: true };
+  }
+}
+
+document.getElementById('btn-sso-signin').addEventListener('click', async () => {
+  if (!msalInstance) return;
+  try {
+    // Try popup first; fall back to redirect if the popup is blocked
+    const result = await msalInstance.loginPopup({
+      scopes: ['openid', 'profile', 'email'],
+      prompt: 'select_account',
+    }).catch(() =>
+      msalInstance.loginRedirect({ scopes: ['openid', 'profile', 'email'] })
+    );
+    if (result) await handleSignInResult(result);
+  } catch (e) {
+    console.error('Sign-in failed:', e);
+  }
+});
+
+document.getElementById('btn-sso-signout').addEventListener('click', async () => {
+  if (!msalInstance) return;
+  const account = msalInstance.getActiveAccount();
+  state.ssoUser = null;
+  document.getElementById('sso-signed-out').style.display = 'block';
+  document.getElementById('sso-signed-in').style.display  = 'none';
+  if (account) {
+    await msalInstance.logoutPopup({ account }).catch(() =>
+      msalInstance.logoutRedirect({ account })
+    );
+  }
+});
+
+// Boot the SSO check on page load
+initSSO();
 </script>
 </body>
 </html>

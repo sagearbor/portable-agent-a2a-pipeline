@@ -29,6 +29,7 @@ load_dotenv()
 from config.settings import PROVIDER
 from bot.api.routes.transcript import router as transcript_router
 from bot.api.routes.jira_projects import router as jira_projects_router
+from bot.api.routes.auth import router as auth_router
 
 
 # ---------------------------------------------------------------------------
@@ -68,8 +69,11 @@ app = FastAPI(
 )
 
 # Mount API routes at /api/v1
-app.include_router(transcript_router,  prefix="/api/v1")
+app.include_router(transcript_router,    prefix="/api/v1")
 app.include_router(jira_projects_router, prefix="/api/v1")
+
+# Mount SSO auth routes at /api/auth
+app.include_router(auth_router, prefix="/api/auth")
 
 
 # ---------------------------------------------------------------------------
