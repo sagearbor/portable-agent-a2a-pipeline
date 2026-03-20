@@ -3,17 +3,22 @@ Persistent store for recurring-meeting Jira defaults.
 
 Implements the "Recurring Meeting Memory" feature described in PRP §4.8.
 
-When a user provides a Jira URL in a Teams meeting that belongs to a recurring
-series (detected via channel_data.meeting.seriesMasterId), the bot can save
-the Jira settings so future sessions of the same series auto-apply them.
+BACKEND TOGGLE
+--------------
+Set SERIES_STORE_BACKEND in .env:
 
-Storage: a local JSON file (bot/data/series_defaults.json) keyed by
-seriesMasterId. Entries expire after EXPIRY_DAYS days of inactivity.
+  SERIES_STORE_BACKEND=file    # default — stores bot/data/series_defaults.json
+  SERIES_STORE_BACKEND=blob    # Azure Blob Storage (production)
 
-In Phase 2 (Azure deployment) replace the JSON backend with Azure Table Storage
-while keeping the same get() / set() / delete() interface.
+Blob mode requires:
+  AZURE_STORAGE_ACCOUNT_URL=https://<account>.blob.core.windows.net
+  BLOB_CONTAINER_NAME=sagejirabot          # optional, defaults to "sagejirabot"
+  BLOB_SERIES_DEFAULTS_NAME=series-defaults.json  # optional
 
-Usage:
+Auth uses DefaultAzureCredential (managed identity in production, az login locally).
+No storage key or connection string needed.
+
+Usage (same regardless of backend):
     from bot.data.series_defaults_store import series_defaults_store
 
     defaults = series_defaults_store.get(series_master_id)
@@ -30,7 +35,9 @@ Usage:
 """
 
 import json
+import os
 import pathlib
+import threading
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -38,10 +45,17 @@ from typing import Optional
 # Config
 # ---------------------------------------------------------------------------
 
-_DATA_DIR = pathlib.Path(__file__).parent          # bot/data/
+EXPIRY_DAYS = 90
+_BACKEND = os.getenv("SERIES_STORE_BACKEND", "file").lower()
+
+# File backend config
+_DATA_DIR   = pathlib.Path(__file__).parent
 _STORE_FILE = _DATA_DIR / "series_defaults.json"
 
-EXPIRY_DAYS = 90  # Entries older than this are pruned on next write
+# Blob backend config (only used when SERIES_STORE_BACKEND=blob)
+_STORAGE_ACCOUNT_URL = os.getenv("AZURE_STORAGE_ACCOUNT_URL", "")
+_CONTAINER_NAME      = os.getenv("BLOB_CONTAINER_NAME", "sagejirabot")
+_BLOB_NAME           = os.getenv("BLOB_SERIES_DEFAULTS_NAME", "series-defaults.json")
 
 
 # ---------------------------------------------------------------------------
@@ -50,115 +64,153 @@ EXPIRY_DAYS = 90  # Entries older than this are pruned on next write
 
 class SeriesDefaultsStore:
     """
-    JSON-file-backed store for recurring-meeting Jira defaults.
+    Stores recurring-meeting Jira defaults keyed by Teams seriesMasterId.
 
-    Each entry is a dict with:
-        jira_base_url: str
-        project_key:   str
-        saved_at:      ISO-8601 timestamp (set automatically by set())
+    Backend is controlled by SERIES_STORE_BACKEND env var:
+    - "file": JSON file on local disk (default, good for dev and VM)
+    - "blob": Azure Blob Storage (production / Container Apps)
 
-    The store is loaded from disk lazily on first access and written back
-    on every mutating operation.  No caching across calls — simple and safe
-    for single-process deployments.
+    Public API is identical regardless of backend. Swap by changing .env only.
     """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        # Validate blob config at startup if blob backend selected
+        if _BACKEND == "blob" and not _STORAGE_ACCOUNT_URL:
+            raise EnvironmentError(
+                "SERIES_STORE_BACKEND=blob requires AZURE_STORAGE_ACCOUNT_URL to be set"
+            )
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def get(self, series_master_id: str) -> Optional[dict]:
-        """
-        Return saved Jira defaults for this series, or None if not found
-        or if the entry has expired.
-
-        Args:
-            series_master_id: Teams Graph API seriesMasterId string
-
-        Returns:
-            dict with keys jira_base_url and project_key, or None
-        """
-        store = self._load()
+        """Return saved Jira defaults for this series, or None if not found / expired."""
+        with self._lock:
+            store = self._load()
         entry = store.get(series_master_id)
         if entry is None:
             return None
-
         # Check expiry
         saved_at_str = entry.get("saved_at")
         if saved_at_str:
             try:
                 saved_at = datetime.fromisoformat(saved_at_str)
                 if datetime.utcnow() - saved_at > timedelta(days=EXPIRY_DAYS):
-                    # Expired — delete and return None
-                    del store[series_master_id]
-                    self._save(store)
+                    with self._lock:
+                        store = self._load()
+                        store.pop(series_master_id, None)
+                        self._save(store)
                     return None
             except ValueError:
-                pass  # Bad timestamp — treat as non-expired, log nothing
-
+                pass
         return {
             "jira_base_url": entry.get("jira_base_url", ""),
             "project_key":   entry.get("project_key",   ""),
         }
 
     def set(self, series_master_id: str, defaults: dict) -> None:
-        """
-        Save Jira defaults for this series.
-
-        Args:
-            series_master_id: Teams Graph API seriesMasterId string
-            defaults: dict with keys jira_base_url (str) and project_key (str)
-        """
-        store = self._load()
-        store[series_master_id] = {
-            "jira_base_url": defaults.get("jira_base_url", ""),
-            "project_key":   defaults.get("project_key", ""),
-            "saved_at":      datetime.utcnow().isoformat(),
-        }
-        self._save(store)
+        """Save Jira defaults for this series."""
+        with self._lock:
+            store = self._load()
+            store[series_master_id] = {
+                "jira_base_url": defaults.get("jira_base_url", ""),
+                "project_key":   defaults.get("project_key", ""),
+                "saved_at":      datetime.utcnow().isoformat(),
+            }
+            self._save(store)
 
     def delete(self, series_master_id: str) -> bool:
-        """
-        Remove saved defaults for this series.
-
-        Args:
-            series_master_id: Teams Graph API seriesMasterId string
-
-        Returns:
-            True if an entry was deleted, False if no entry existed.
-        """
-        store = self._load()
-        if series_master_id not in store:
-            return False
-        del store[series_master_id]
-        self._save(store)
+        """Remove saved defaults for this series. Returns True if deleted."""
+        with self._lock:
+            store = self._load()
+            if series_master_id not in store:
+                return False
+            del store[series_master_id]
+            self._save(store)
         return True
 
+    @property
+    def backend(self) -> str:
+        return _BACKEND
+
     # ------------------------------------------------------------------
-    # Private helpers
+    # Private — File backend
     # ------------------------------------------------------------------
 
-    def _load(self) -> dict:
-        """Load the JSON store from disk. Returns empty dict if file missing."""
+    def _load_file(self) -> dict:
         if not _STORE_FILE.exists():
             return {}
         try:
             return json.loads(_STORE_FILE.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            # Corrupt or unreadable file — start fresh
             return {}
 
-    def _save(self, store: dict) -> None:
-        """Write the store dict to disk as JSON."""
+    def _save_file(self, store: dict) -> None:
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         _STORE_FILE.write_text(
             json.dumps(store, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
 
+    # ------------------------------------------------------------------
+    # Private — Blob backend
+    # ------------------------------------------------------------------
+
+    def _load_blob(self) -> dict:
+        from azure.storage.blob import BlobServiceClient
+        from azure.identity import DefaultAzureCredential
+        try:
+            client = BlobServiceClient(
+                account_url=_STORAGE_ACCOUNT_URL,
+                credential=DefaultAzureCredential(),
+            )
+            blob = client.get_blob_client(container=_CONTAINER_NAME, blob=_BLOB_NAME)
+            data = blob.download_blob().readall()
+            return json.loads(data)
+        except Exception:
+            # Blob missing (first run) or unreadable — start fresh
+            return {}
+
+    def _save_blob(self, store: dict) -> None:
+        from azure.storage.blob import BlobServiceClient, ContentSettings
+        from azure.identity import DefaultAzureCredential
+        client = BlobServiceClient(
+            account_url=_STORAGE_ACCOUNT_URL,
+            credential=DefaultAzureCredential(),
+        )
+        # Ensure container exists (no-op if already exists)
+        container = client.get_container_client(_CONTAINER_NAME)
+        try:
+            container.create_container()
+        except Exception:
+            pass  # Already exists
+        blob = client.get_blob_client(container=_CONTAINER_NAME, blob=_BLOB_NAME)
+        blob.upload_blob(
+            json.dumps(store, indent=2, ensure_ascii=False).encode("utf-8"),
+            overwrite=True,
+            content_settings=ContentSettings(content_type="application/json"),
+        )
+
+    # ------------------------------------------------------------------
+    # Backend router
+    # ------------------------------------------------------------------
+
+    def _load(self) -> dict:
+        if _BACKEND == "blob":
+            return self._load_blob()
+        return self._load_file()
+
+    def _save(self, store: dict) -> None:
+        if _BACKEND == "blob":
+            self._save_blob(store)
+        else:
+            self._save_file(store)
+
 
 # ---------------------------------------------------------------------------
-# Module-level singleton — import and use directly:
-#   from bot.data.series_defaults_store import series_defaults_store
+# Module-level singleton
 # ---------------------------------------------------------------------------
 
 series_defaults_store = SeriesDefaultsStore()
