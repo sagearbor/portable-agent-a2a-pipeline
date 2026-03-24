@@ -161,6 +161,7 @@ def create_ticket(
     priority: str = "Medium",
     epic_key: str | None = None,
     credentials: JiraCredentials | None = None,
+    labels: list[str] | None = None,
 ) -> dict:
     """
     Create a Jira ticket via REST API v3.
@@ -193,6 +194,7 @@ def create_ticket(
             "issuetype":   {"name": "Task"},
             "priority":    {"name": jira_priority},
             **( {"parent": {"key": epic_key}} if epic_key else {} ),
+            **( {"labels": labels} if labels else {} ),
             "description": {
                 "type":    "doc",
                 "version": 1,

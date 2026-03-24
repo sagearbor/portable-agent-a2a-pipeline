@@ -1,0 +1,93 @@
+[00:00:03] Athena Roadmap: Alright everyone, let's get started. This is our sprint planning for the notification system. We've got two weeks and a pretty clear set of requirements from the product brief. Dante, can you pull up the architecture doc?
+
+[00:00:18] Dante Debugger: Yeah, one sec. Okay, so the high-level idea is we need a notification service that supports email, in-app, and push channels. Users should be able to configure their preferences per channel and per event type.
+
+[00:00:35] Athena Roadmap: Right. And the key constraint is that we need to support batching. We can't fire off individual emails for every single event — users were complaining about inbox flooding last quarter.
+
+[00:00:48] Fredo Kanban: Before we get into the weeds, can I just flag that we still don't have the API contract finalized with the frontend team? Last sprint we burned two days waiting on that.
+
+[00:01:02] Athena Roadmap: Good call. I'll ping Zelda's team after this meeting. But let's plan assuming the contract will look like what we discussed in the design review. If it changes, we adapt.
+
+[00:01:15] Pandora Checkbox: I have a question about the preference model. Are we storing preferences in the user service or in the notification service? Because if it's the user service, we need to coordinate with that team on schema changes.
+
+[00:01:30] Dante Debugger: I'd strongly recommend keeping preferences in the notification service. We don't want a circular dependency where the notification service calls back to the user service just to figure out how to deliver a message.
+
+[00:01:45] Pandora Checkbox: Makes sense. So we need a new preferences table. I can take that — schema design plus the CRUD endpoints.
+
+[00:01:55] Athena Roadmap: Perfect. Let's call that our first story. Pandora, estimate?
+
+[00:02:05] Pandora Checkbox: Two days for the schema, migrations, and basic REST endpoints. Three if we want validation and tests.
+
+[00:02:14] Athena Roadmap: Let's do three. Tests are non-negotiable this sprint. Fredo, can you create the ticket?
+
+[00:02:22] Fredo Kanban: Already on it. "Notification preferences — schema, migrations, CRUD endpoints with tests." Assigning to Pandora, three-day estimate.
+
+[00:02:35] Dante Debugger: Okay, next big piece is the dispatch engine itself. We need something that takes an event, looks up the user's preferences, and routes to the right channel handler. I'm thinking we use a strategy pattern — one handler per channel, registered in a factory.
+
+[00:02:55] Athena Roadmap: I like that. It keeps things extensible. When we add SMS next quarter, we just drop in a new handler.
+
+[00:03:05] Pandora Checkbox: What about the batching logic? Does that live in the dispatch engine or in each channel handler?
+
+[00:03:14] Dante Debugger: Good question. I think batching should be a separate layer that sits between the dispatch engine and the channel handlers. A BatchAccumulator that collects events over a configurable window and then flushes them as a digest.
+
+[00:03:30] Fredo Kanban: That sounds like its own story. "Implement BatchAccumulator with configurable time window and flush logic."
+
+[00:03:40] Dante Debugger: Yeah. I'll take that one. Probably three days — the timer logic and edge cases around partial flushes are tricky.
+
+[00:03:52] Athena Roadmap: Dante on BatchAccumulator, three days. Got it. What about the actual channel handlers?
+
+[00:04:03] Pandora Checkbox: I can pick up the email handler after I finish preferences. We're using SendGrid, right?
+
+[00:04:10] Athena Roadmap: Yes, SendGrid for transactional email. The API key is already in our vault.
+
+[00:04:18] Fredo Kanban: We should also make sure we have a dead letter queue for failed sends. Last time we had a SendGrid outage, we just silently dropped notifications.
+
+[00:04:30] Dante Debugger: Absolutely. We can use the existing Redis setup for that. Failed sends go to a retry queue with exponential backoff, and after three attempts they land in a dead letter queue that we can monitor.
+
+[00:04:45] Athena Roadmap: That's critical. Fredo, separate ticket for the retry and dead letter queue mechanism?
+
+[00:04:52] Fredo Kanban: Yep. "Implement retry queue with exponential backoff and dead letter queue for failed notification sends." Who's taking it?
+
+[00:05:02] Dante Debugger: I can do that alongside the BatchAccumulator since they share the Redis infrastructure. Add a day to my estimate — so four days total for both.
+
+[00:05:15] Athena Roadmap: Works for me. What about in-app notifications? That's the WebSocket piece.
+
+[00:05:23] Pandora Checkbox: That one's more complex. We need a WebSocket connection manager, a notification store for when users are offline, and the frontend component. I don't think we can do all of that in this sprint.
+
+[00:05:38] Athena Roadmap: Agreed. Let's scope it down. This sprint, let's just do the backend — the WebSocket endpoint and the notification store. Frontend can pick it up next sprint.
+
+[00:05:50] Fredo Kanban: So the ticket would be: "In-app notification backend — WebSocket endpoint and persistent notification store for offline delivery."
+
+[00:06:02] Athena Roadmap: Right. Who wants it?
+
+[00:06:06] Dante Debugger: I can take the WebSocket endpoint if Pandora handles the notification store. The store is basically another CRUD service, similar to preferences.
+
+[00:06:18] Pandora Checkbox: Sure, I can do that. Two days after the email handler wraps up.
+
+[00:06:27] Athena Roadmap: Okay, so to summarize what we've got so far. Pandora: preferences CRUD, three days, then email handler via SendGrid, two days, then notification store, two days. Dante: BatchAccumulator plus retry and dead letter queue, four days, then WebSocket endpoint, two days. Fredo, you're on ticket management and you mentioned you wanted to set up the integration test harness?
+
+[00:06:55] Fredo Kanban: Yeah, I'll build out the test harness so we can do end-to-end tests with a mock SendGrid and a test WebSocket client. Probably two days.
+
+[00:07:08] Athena Roadmap: Great. One more thing — we need monitoring. I want a Grafana dashboard that shows notification volume by channel, failure rates, and batch sizes.
+
+[00:07:22] Fredo Kanban: I can do that after the test harness. We already have Prometheus metrics wired up, so it's mostly dashboard config. One day.
+
+[00:07:33] Pandora Checkbox: Oh wait, one thing I forgot — do we need to handle notification templates? Like, are we hardcoding the email body or using a template engine?
+
+[00:07:45] Dante Debugger: Templates for sure. We should use Jinja2. Each event type maps to a template. But that might be a separate story — "Create notification template system with Jinja2, one template per event type."
+
+[00:07:58] Athena Roadmap: Good catch. Pandora, can you roll that into the email handler work? Since you're already touching SendGrid, adding template rendering makes sense there.
+
+[00:08:10] Pandora Checkbox: Yeah, I can do that. Bump the email handler to three days instead of two.
+
+[00:08:18] Athena Roadmap: Done. Okay, let's lock this in. Fredo, read back the tickets?
+
+[00:08:25] Fredo Kanban: Alright, here's what we've got. One: notification preferences schema, migrations, and CRUD with tests, Pandora, three days. Two: BatchAccumulator with configurable time window and flush logic, Dante, included in item three. Three: retry queue with exponential backoff and dead letter queue, Dante, four days total for this and the accumulator. Four: email channel handler with SendGrid integration and Jinja2 templates, Pandora, three days. Five: in-app notification store for offline delivery, Pandora, two days. Six: WebSocket endpoint for real-time in-app notifications, Dante, two days. Seven: integration test harness with mock services, Fredo, two days. Eight: Grafana monitoring dashboard for notification metrics, Fredo, one day.
+
+[00:09:10] Athena Roadmap: That's eight stories, fits in two weeks with a day of buffer. Any concerns?
+
+[00:09:18] Dante Debugger: Just one — let's make sure we block the WebSocket work on the notification store being done. I need that data layer to exist before I wire up the socket.
+
+[00:09:28] Athena Roadmap: Noted. Fredo, add the dependency. Anything else? No? Great. Let's ship it.
+
+[00:09:35] Fredo Kanban: Meeting notes and tickets going up in five minutes. Have a good one, everyone.
