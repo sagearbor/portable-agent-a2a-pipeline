@@ -136,6 +136,30 @@ All `console.log/error` calls in the frontend use `dbg(level, ...)` or `dbgErr(l
 
 Set to `0` for production/demo, `5` for general debugging, `10` for tracing issues.
 
+## Tool Architecture — MCP + Core Package
+
+The repo uses a layered architecture for reusable tools:
+
+```
+core/                    # Python functions (actual logic)
+  tools/jira_tool.py     # Jira REST API v3 — tickets, epics, links, dates
+  tools/outlook_tool.py  # Email reader (stub, pending IT Graph API approval)
+  adapters/              # Format converters (transcript → email-shaped dicts)
+  clients/client.py      # LLM client factory (provider toggle)
+  config/settings.py     # Central configuration
+
+mcp_servers/             # MCP wrappers (interop layer)
+  jira_server.py         # FastMCP server exposing Jira tools
+  transcript_server.py   # FastMCP server exposing transcript parsing
+
+bot/                     # FastAPI web app (imports core/ directly)
+.claude/skills/          # Claude Code skill (imports core/ via Bash)
+```
+
+**Design principle:** `core/` contains the logic. MCP servers are thin wrappers for cross-platform discovery. The FastAPI web app imports `core/` directly (same process, zero overhead). External consumers (Azure AI Foundry, Claude Code, OpenAI Agents SDK, colleague's agents) connect via MCP.
+
+**MCP context bloat mitigation:** Use `defer_loading: true` in Claude Code MCP config. Azure AI Foundry registers tools server-side (no prompt injection). The web app doesn't use MCP at all.
+
 ## Docker / Deployment
 
 - **Port:** 3006 (NGINX proxies from `https://aidemo.dcri.duke.edu/sageapp06/`)
