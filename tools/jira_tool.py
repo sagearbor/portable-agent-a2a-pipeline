@@ -224,14 +224,9 @@ def create_ticket(
         fields["labels"] = labels
     if fix_version_id:
         fields["fixVersions"] = [{"id": fix_version_id}]
-    if start_date:
-        # Try both field names — team-managed uses "startDate",
-        # classic uses a custom field (discovered via editmeta)
-        fields["customfield_13412"] = start_date   # classic project "Start date"
-        fields["startDate"] = start_date            # team-managed fallback
-    if due_date:
-        fields["duedate"] = due_date                # classic (lowercase)
-        fields["dueDate"] = due_date                # team-managed fallback
+    # Dates are set via POST-creation update (see below) because field IDs
+    # vary across Jira instances and project types. We discover the correct
+    # field IDs from editmeta after the issue exists.
     if original_estimate:
         fields["timetracking"] = {"originalEstimate": original_estimate}
     if assignee_account_id:
@@ -249,7 +244,10 @@ def create_ticket(
 
     # If create fails due to unsupported fields, retry without them
     if resp.status_code == 400 and "cannot be set" in resp.text:
-        droppable = ["startDate", "dueDate", "timetracking", "fixVersions"]
+        # Drop any field that Jira rejects — covers date custom fields, timetracking, etc.
+        import re
+        err_fields = re.findall(r"\"(\w+)\":\"Field '[^']+' cannot be set", resp.text)
+        droppable = err_fields if err_fields else ["timetracking", "fixVersions"]
         dropped = [f for f in droppable if f in fields]
         if dropped:
             for f in dropped:
@@ -271,6 +269,34 @@ def create_ticket(
     data = resp.json()
     ticket_id = data["key"]
     url = f"{base_url}/browse/{ticket_id}"
+
+    # Set dates via PUT update — discover correct field IDs from editmeta
+    if start_date or due_date:
+        try:
+            meta = requests.get(
+                f"{base_url}/rest/api/3/issue/{ticket_id}/editmeta",
+                auth=auth, headers=headers, timeout=10,
+            )
+            if meta.ok:
+                date_update = {}
+                for fid, fmeta in meta.json().get("fields", {}).items():
+                    fname = fmeta.get("name", "").lower()
+                    if "start" in fname and "date" in fname and start_date:
+                        date_update[fid] = start_date
+                    elif fname == "due date" and due_date:
+                        date_update[fid] = due_date
+                if date_update:
+                    dr = requests.put(
+                        f"{base_url}/rest/api/3/issue/{ticket_id}",
+                        json={"fields": date_update},
+                        auth=auth, headers=headers, timeout=10,
+                    )
+                    if dr.ok:
+                        print(f"[jira_tool] Set dates on {ticket_id}: {date_update}")
+                    else:
+                        print(f"[jira_tool] Date update failed on {ticket_id}: {dr.text[:100]}")
+        except Exception as e:
+            print(f"[jira_tool] Date update error: {e}")
 
     # Sprint assignment uses the Agile REST API (custom field IDs vary by
     # instance, so we move the issue into the sprint after creation instead
