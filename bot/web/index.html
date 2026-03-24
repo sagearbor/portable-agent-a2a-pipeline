@@ -1531,7 +1531,11 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
           deleted: false,
         }));
         // Update context with what enrichment returned
-        if (enrichData.context) state.jiraContext = enrichData.context;
+        if (enrichData.context) {
+          // Merge — keep users from initial context fetch (enrichment doesn't return users)
+          const existingUsers = state.jiraContext.users || [];
+          state.jiraContext = { ...enrichData.context, users: enrichData.context.users || existingUsers };
+        }
       }
       hideAlert(infoEl);
     } catch (e) {
