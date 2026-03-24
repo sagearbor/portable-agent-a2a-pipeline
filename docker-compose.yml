@@ -4,7 +4,7 @@ services:
   sagejirabot:
     build: .
     ports:
-      - "9000:9000"
+      - "3006:3006"
     environment:
       # Azure AI Foundry (required for LLM calls)
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
@@ -22,14 +22,17 @@ services:
       - BOT_SESSION_TIMEOUT_MINUTES=${BOT_SESSION_TIMEOUT_MINUTES:-30}
       - BOT_DRY_RUN_DEFAULT=${BOT_DRY_RUN_DEFAULT:-false}
       - BOT_HOST=0.0.0.0
-      - BOT_PORT=9000
+      - BOT_PORT=3006
+      # Auth override for Docker (set by start-docker.sh)
+      - AZURE_AUTH_MODE=${AZURE_AUTH_MODE:-az_login}
+      - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY:-}
     # .env file is NOT baked into the image — it is loaded at runtime
     # For local dev: docker-compose will pick up .env automatically
     env_file:
       - .env
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:9000/health')"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3006/health')"]
       interval: 30s
       timeout: 10s
       retries: 3

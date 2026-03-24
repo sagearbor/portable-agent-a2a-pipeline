@@ -27,6 +27,8 @@ Options:
                         NOT for Duke Health / PHI data - data leaves Duke tenant.
 """
 
+import os
+
 #PROVIDER = "openai_responses"  # <-- change this one value to switch everything
 PROVIDER = "azure"  # <-- change this one value to switch everything
 
@@ -59,10 +61,10 @@ MODELS = {
 # "api_key"          - uses AZURE_OPENAI_KEY from .env
 #     Simpler for quick local testing. Never commit the key.
 #
-AZURE_AUTH_MODE = "az_login"  # "az_login" | "managed_identity" | "api_key"
+AZURE_AUTH_MODE = os.environ.get("AZURE_AUTH_MODE", "az_login")  # "az_login" | "managed_identity" | "api_key"
 
 # ---------------------------------------------------------------------------
 # Temperature / shared inference settings
 # ---------------------------------------------------------------------------
 TEMPERATURE = 0.2   # lower = more deterministic, good for routing agents
-MAX_TOKENS  = 2048
+MAX_TOKENS  = 4096  # bumped from 2048 — agent3 needs room for multi-ticket descriptions

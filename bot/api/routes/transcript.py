@@ -10,6 +10,7 @@ Route is mounted at /api/v1 in bot/api/main.py, so the full path is:
 
 import os
 import time
+from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -211,6 +212,7 @@ class SubmitTicketRequest(BaseModel):
     description: str
     priority:    str = "Medium"
     project_key: str = "ST"
+    batch_id:    str | None = None   # shared batch timestamp for all tickets in one submission
     # Optional credential overrides (same semantics as TranscriptRequest).
     # The web UI no longer sends these; server falls back to env vars when None.
     jira_base_url:  str | None = None
@@ -246,11 +248,17 @@ async def submit_ticket(req: SubmitTicketRequest) -> TicketResult:
         os.environ["JIRA_PROJECT_KEY"] = req.project_key
 
     try:
+        # Always label tickets created by the bot for traceability
+        # batch_id groups tickets from the same submission for easy bulk delete
+        batch_ts = req.batch_id or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        labels = ["sageJiraBot", batch_ts]
+
         result = _create_ticket(
             summary=req.summary,
             description=req.description,
             priority=req.priority,
             credentials=credentials,
+            labels=labels,
         )
         return TicketResult(
             ticket_id=result["ticket_id"],

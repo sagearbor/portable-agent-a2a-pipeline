@@ -118,6 +118,33 @@ The overarching goal is to compare two approaches to building agents and run bot
 - Always scope az commands with `--resource-group` and project/workspace name
 - The user is learning Azure AI Foundry — teach along the way
 
+## Frontend Debug Logging
+
+`bot/web/index.html` has a leveled debug system controlled by a single variable at the top of `<script>`:
+
+```javascript
+const DEBUG_LEVEL = 5;  // 0=off, 1=errors, 5=key events, 8=verbose, 10=everything
+function dbg(level, ...args) { if (DEBUG_LEVEL >= level) console.log(...args); }
+function dbgErr(level, ...args) { if (DEBUG_LEVEL >= level) console.error(...args); }
+```
+
+All `console.log/error` calls in the frontend use `dbg(level, ...)` or `dbgErr(level, ...)`. When adding new debug output, choose a level:
+- **1:** Errors that should always be visible
+- **5:** Key lifecycle events (request sent, response status, result count)
+- **7-8:** Request/response details (headers, body previews)
+- **10:** Full payloads, response tails
+
+Set to `0` for production/demo, `5` for general debugging, `10` for tracing issues.
+
+## Docker / Deployment
+
+- **Port:** 3006 (NGINX proxies from `https://aidemo.dcri.duke.edu/sageapp06/`)
+- **Start:** `./start-docker.sh` — fetches Azure bearer token + starts container
+- **Auto-start:** Cron `@reboot` runs `start-docker.sh`; token refreshed every 45 min via cron
+- **Azure auth in Docker:** Bearer token passed as `AZURE_OPENAI_KEY` (api_key mode) because Docker can't use `az login` directly. This is a dev VM workaround — Azure Container Apps will use managed identity.
+- **`restart: unless-stopped`** in docker-compose.yml — container survives Docker daemon restarts
+- **Frontend subpath:** All `fetch()` URLs use `BASE` variable (auto-detected from `window.location.pathname`) to support reverse proxy subpaths
+
 ## Docs
 
 - `docs/managed-identity-guide.md` — full walkthrough of auth, local dev, deployment, troubleshooting

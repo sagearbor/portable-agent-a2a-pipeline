@@ -9,6 +9,9 @@ Endpoints:
     POST /api/v1/process-transcript       - process transcript -> Jira tickets
     POST /api/v1/submit-ticket            - create a single pre-authored ticket
     GET  /api/v1/jira/projects            - list accessible Jira projects
+    POST /api/v1/jira/check-duplicates    - check for duplicate Jira issues
+    POST /api/v1/generate-transcript      - LLM-generated demo transcript
+    GET  /api/v1/sample-transcript        - download sample transcript file
     GET  /                                - web UI (bot/web/index.html)
 
 Phase 2 will add:
@@ -30,6 +33,8 @@ from config.settings import PROVIDER
 from bot.api.routes.transcript import router as transcript_router
 from bot.api.routes.jira_projects import router as jira_projects_router
 from bot.api.routes.auth import router as auth_router
+from bot.api.routes.demo import router as demo_router
+from bot.api.routes.jira_search import router as jira_search_router
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +76,8 @@ app = FastAPI(
 # Mount API routes at /api/v1
 app.include_router(transcript_router,    prefix="/api/v1")
 app.include_router(jira_projects_router, prefix="/api/v1")
+app.include_router(demo_router,          prefix="/api/v1")
+app.include_router(jira_search_router,   prefix="/api/v1")
 
 # Mount SSO auth routes at /api/auth
 app.include_router(auth_router, prefix="/api/auth")
@@ -127,5 +134,5 @@ if _web_dir.is_dir():
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.getenv("BOT_PORT", "9000"))
+    port = int(os.getenv("BOT_PORT", "3006"))
     uvicorn.run("bot.api.main:app", host="0.0.0.0", port=port, reload=False)

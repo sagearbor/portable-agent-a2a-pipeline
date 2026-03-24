@@ -220,8 +220,9 @@
     }
 
     textarea {
-      resize: vertical;
+      resize: both;
       min-height: 80px;
+      width: 100%;
     }
 
     /* -----------------------------------------------------------------------
@@ -670,6 +671,108 @@
     .mt-12 { margin-top: 12px; }
     .text-muted { color: var(--text-muted); font-size: 12px; }
     .flex-row { display: flex; gap: 8px; align-items: center; }
+
+    /* -----------------------------------------------------------------------
+       Demo modal overlay
+    ----------------------------------------------------------------------- */
+    .demo-modal {
+      position: fixed; inset: 0; z-index: 100;
+      display: flex; align-items: center; justify-content: center;
+    }
+    .demo-backdrop {
+      position: absolute; inset: 0;
+      background: rgba(0,0,0,0.45); backdrop-filter: blur(2px);
+    }
+    .demo-card {
+      position: relative; z-index: 1;
+      background: var(--card-bg); border-radius: 8px;
+      padding: 28px; width: 520px; max-width: 90vw;
+      max-height: 85vh; overflow-y: auto;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.2);
+    }
+    .demo-header {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-bottom: 20px;
+    }
+    .demo-header h2 { font-size: 16px; font-weight: 600; }
+    .demo-close {
+      background: none; border: none; font-size: 22px;
+      cursor: pointer; color: var(--text-muted); padding: 0 4px;
+    }
+    .demo-close:hover { color: #2d3142; }
+
+    /* -----------------------------------------------------------------------
+       Detail level segmented control
+    ----------------------------------------------------------------------- */
+    .detail-toggle {
+      display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+    }
+    .detail-toggle input[type="radio"] { display: none; }
+    .detail-toggle label {
+      padding: 6px 16px; font-size: 12px; font-weight: 600;
+      cursor: pointer; text-transform: none; letter-spacing: 0;
+      border-right: 1px solid var(--border); transition: all 0.15s;
+      color: var(--text-muted); background: #f8f9fd;
+    }
+    .detail-toggle label:last-of-type { border-right: none; }
+    .detail-toggle input:checked + label {
+      background: var(--accent); color: #fff;
+    }
+
+    /* -----------------------------------------------------------------------
+       Demo trigger button in sidebar
+    ----------------------------------------------------------------------- */
+    .demo-trigger {
+      display: flex; align-items: center; gap: 8px;
+      background: rgba(255,255,255,0.07); border: 1px solid rgba(255,255,255,0.1);
+      border-radius: var(--radius); padding: 8px 12px;
+      color: var(--text-muted); font-size: 12px; font-weight: 500;
+      cursor: pointer; transition: all 0.15s; width: 100%;
+      margin-bottom: 12px;
+    }
+    .demo-trigger:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+    /* -----------------------------------------------------------------------
+       Coming soon field
+    ----------------------------------------------------------------------- */
+    .coming-soon-field input {
+      background: #f8f9fd !important; border-style: dashed !important;
+      cursor: not-allowed;
+    }
+    .coming-soon-tag {
+      display: inline-block; font-size: 10px; font-weight: 700;
+      background: var(--warn); color: #fff; padding: 1px 6px;
+      border-radius: 3px; margin-left: 6px; vertical-align: middle;
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+
+    /* -----------------------------------------------------------------------
+       AI-generated badge
+    ----------------------------------------------------------------------- */
+    .ai-badge {
+      position: absolute; top: 8px; right: 8px;
+      background: #e8f0fe; color: #1a4f9c; font-size: 10px;
+      font-weight: 600; padding: 2px 8px; border-radius: 3px;
+      display: none; /* shown via JS */
+    }
+    .transcript-wrap { position: relative; }
+
+    /* -----------------------------------------------------------------------
+       Duplicate warning
+    ----------------------------------------------------------------------- */
+    .dup-warning {
+      margin-top: 4px; padding: 4px 8px;
+      background: #fef8e8; border: 1px solid #f0d68a;
+      border-radius: 4px; font-size: 11px; color: #8a6d00;
+    }
+    .dup-warning a { color: #6b5200; font-weight: 600; }
+
+    /* -----------------------------------------------------------------------
+       Demo divider
+    ----------------------------------------------------------------------- */
+    .demo-divider {
+      border-top: 1px solid var(--border); margin: 16px 0;
+    }
   </style>
 </head>
 <body>
@@ -699,6 +802,14 @@
   </nav>
 
   <div class="sidebar-footer">
+    <button class="demo-trigger" id="btn-demo-mode" title="Open Demo Mode — generate transcripts from ideas">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 3h6v5l3 7H6l3-7V3z"/>
+        <path d="M6 15v4c0 1 1 2 2 2h8c1 0 2-1 2-2v-4"/>
+        <line x1="12" y1="3" x2="12" y2="1"/>
+      </svg>
+      Demo Mode
+    </button>
     <p>Powered by the portable-agent-a2a-pipeline. Tickets are created in your chosen Jira project.</p>
   </div>
 </aside>
@@ -798,12 +909,20 @@
       <div class="drop-icon">&#8659;</div>
       <p>Drag &amp; drop a transcript file here</p>
       <p style="font-size:11px; margin-top:4px; color:#aaa;">.txt &nbsp;.vtt &nbsp;.srt</p>
+      <p style="font-size:11px; margin-top:8px; color:#999;">
+        <span class="info-icon" data-tip="How to get a transcript:&#10;• Teams: Meeting recap → Download transcript&#10;• Zoom: Recording → Transcript tab → Download&#10;• Webex: Recordings → Download transcript&#10;• Or paste any meeting notes directly below">ⓘ</span>
+        How do I get a transcript?
+      </p>
       <p class="file-name" id="file-name-label" style="display:none;"></p>
     </div>
 
     <div class="divider-or">or paste below</div>
 
-    <textarea id="transcript-text" rows="8" placeholder="Paste transcript text here..."></textarea>
+    <div class="transcript-wrap">
+      <textarea id="transcript-text" rows="8" placeholder="Paste transcript text here..." data-gramm="false" data-gramm_editor="false" data-enable-grammarly="false"></textarea>
+      <span class="ai-badge" id="ai-badge" style="display:none;">AI-generated</span>
+      <a id="download-generated" style="display:none; position:absolute; top:8px; right:100px; font-size:11px; font-weight:600; color:#1a4f9c; background:#e8f0fe; padding:2px 8px; border-radius:3px; text-decoration:none;" href="#">Save as .txt</a>
+    </div>
 
     <!-- Metadata & project selection -->
     <div class="transcript-meta">
@@ -817,13 +936,14 @@
         <input type="text" id="meeting-title" placeholder="e.g. Sprint Planning — March 2026" />
       </div>
       <div class="field">
-        <label for="project-select">
+        <label for="project-key-input">
           <span class="tooltip-wrap">
-            Jira Project
-            <span class="info-icon" data-tip="The project where tickets will be created.&#10;You must have &quot;Create Issues&quot; permission in the selected project.">ⓘ</span>
+            Jira Project Key
+            <span class="info-icon" data-tip="Type the project key (e.g. ST) or paste a Jira URL.&#10;The key is the short code before the ticket number (e.g. ST in ST-42).">ⓘ</span>
           </span>
         </label>
-        <select id="project-select" disabled>
+        <input type="text" id="project-key-input" placeholder="e.g. ST" value="ST" style="text-transform:uppercase;" />
+        <select id="project-select" style="display:none;">
           <option value="">— connect first —</option>
         </select>
       </div>
@@ -870,14 +990,95 @@
 
 </main>
 
+<!-- Demo Mode Modal -->
+<div class="demo-modal" id="demo-modal" style="display:none;">
+  <div class="demo-backdrop" id="demo-backdrop"></div>
+  <div class="demo-card">
+    <div class="demo-header">
+      <h2>Demo Mode</h2>
+      <button class="demo-close" id="demo-close">&times;</button>
+    </div>
+
+    <div class="field" style="margin-bottom:14px;">
+      <label>
+        <span class="tooltip-wrap">
+          Meeting Topic / Idea
+          <span class="info-icon" data-tip="Describe a meeting topic and the AI will generate a realistic transcript with fictional speakers. The transcript lands in the upload area for you to review and process.">ⓘ</span>
+        </span>
+      </label>
+      <textarea id="demo-idea" rows="3" placeholder="e.g. Sprint planning for a notification system that supports email, SMS, and push notifications..." style="width:100%;"></textarea>
+    </div>
+
+    <div class="field" style="margin-bottom:14px;">
+      <label>Detail Level</label>
+      <div class="detail-toggle">
+        <input type="radio" name="demo-detail" value="low" id="detail-low">
+        <label for="detail-low">Low</label>
+        <input type="radio" name="demo-detail" value="medium" id="detail-medium" checked>
+        <label for="detail-medium">Medium</label>
+        <input type="radio" name="demo-detail" value="high" id="detail-high">
+        <label for="detail-high">High</label>
+      </div>
+      <p class="text-muted" style="margin-top:4px;">Low: quick standup (~5 min). Medium: planning session (~15 min). High: deep design review (~30 min).</p>
+    </div>
+
+    <button class="btn btn-primary" id="btn-generate" style="width:100%;">Generate Transcript</button>
+    <div class="alert alert-error" id="demo-error"></div>
+    <div class="alert alert-info" id="demo-info"></div>
+
+    <div class="demo-divider"></div>
+
+    <p style="font-size:12px; color:var(--text-muted); margin-bottom:10px;">Or use a pre-written sample:</p>
+    <button class="btn btn-secondary" id="btn-sample" style="width:100%;">
+      Download Sample Transcript
+    </button>
+    <p class="text-muted" style="margin-top:4px;">Sprint planning meeting for a notification system — 4 speakers, ~35 turns.</p>
+
+    <div class="demo-divider"></div>
+
+    <div class="field coming-soon-field">
+      <label>
+        <span class="tooltip-wrap">
+          SharePoint Context
+          <span class="coming-soon-tag">Coming Soon</span>
+          <span class="info-icon" data-tip="Connect a SharePoint site or document library to give the AI context about your team's existing work, standards, and terminology.&#10;&#10;Produces more specific, actionable tickets grounded in your actual project documentation.">ⓘ</span>
+        </span>
+      </label>
+      <input type="text" disabled placeholder="e.g. https://yourorg.sharepoint.com/sites/team-docs" />
+      <p class="text-muted" style="margin-top:4px;">Provide a SharePoint document library for context-aware generation (RAG).</p>
+    </div>
+  </div>
+</div>
+
 <script>
+/* =========================================================================
+   Debug level — 0=off, 1=errors only, 5=key events, 10=verbose
+   Change this single value to control all console logging.
+========================================================================= */
+const DEBUG_LEVEL = 5;
+function dbg(level, ...args) { if (DEBUG_LEVEL >= level) console.log(...args); }
+function dbgErr(level, ...args) { if (DEBUG_LEVEL >= level) console.error(...args); }
+
+/* =========================================================================
+   Base path — auto-detect when served behind a reverse proxy subpath
+   e.g. https://aidemo.dcri.duke.edu/sageapp06/ → BASE = "/sageapp06"
+   When served at root (localhost:3006/) → BASE = ""
+========================================================================= */
+const BASE = (() => {
+  // If the page URL has a path beyond '/', strip trailing slash and use it
+  const path = window.location.pathname.replace(/\/+$/, '');
+  // If the path looks like it ends with index.html or is just '/', return ''
+  if (!path || path === '/' || path.endsWith('.html')) return '';
+  return path;
+})();
+
 /* =========================================================================
    State
 ========================================================================= */
 const state = {
   connected: false,
   baseUrl:   '',
-  projectKey: '',
+  projectKey: 'ST',
   transcriptText: '',
   draftTickets: [],   // [{summary, priority, description, email_id, checked, deleted}]
   ssoUser: null,      // {email, name, valid} when signed in via Azure AD SSO; null otherwise
@@ -894,6 +1095,15 @@ function showAlert(el, msg) {
 function hideAlert(el) {
   el.classList.remove('show');
   el.textContent = '';
+}
+
+function extractErrorMsg(detail, fallback) {
+  // detail can be a string, an object {message: "..."}, or an array
+  if (!detail) return fallback;
+  if (typeof detail === 'string') return detail;
+  if (detail.message) return detail.message;
+  if (Array.isArray(detail)) return detail.map(d => d.msg || d.message || JSON.stringify(d)).join('; ');
+  return JSON.stringify(detail);
 }
 
 function setLoading(btn, isLoading) {
@@ -933,10 +1143,26 @@ function updateNavSteps() {
    Section 1 — Connect
 ========================================================================= */
 
-// Normalize the base URL on blur: strip to scheme + hostname only
+// Extract project key from a full Jira URL like /projects/ST/boards/123
+function extractProjectKeyFromUrl(raw) {
+  try {
+    const url = new URL(raw);
+    const match = url.pathname.match(/\/projects\/([A-Z0-9_]+)/i);
+    return match ? match[1].toUpperCase() : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// Normalize the base URL on blur: strip to scheme + hostname only,
+// but save any project key first
+let _pendingProjectKey = null;
 document.getElementById('jira-base-url').addEventListener('blur', function () {
   const raw = this.value.trim();
   if (!raw) return;
+  // Extract project key before stripping URL
+  const pk = extractProjectKeyFromUrl(raw);
+  if (pk) _pendingProjectKey = pk;
   try {
     const url = new URL(raw);
     this.value = `${url.protocol}//${url.hostname}`;
@@ -966,22 +1192,29 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
   try {
     // No email/token sent — server uses its service account credentials
     const params = new URLSearchParams({ base_url: baseUrl });
-    const resp   = await fetch(`/api/v1/jira/projects?${params}`);
+    const resp   = await fetch(`${BASE}/api/v1/jira/projects?${params}`);
 
     if (resp.status === 401) {
       const data = await resp.json().catch(() => ({}));
-      throw new Error(data.detail || 'Server credentials are invalid — contact an administrator.');
+      throw new Error(extractErrorMsg(data.detail, 'Server credentials are invalid — contact an administrator.'));
     }
 
     if (!resp.ok) {
       const data = await resp.json().catch(() => ({}));
-      throw new Error(data.detail || `Server error ${resp.status}`);
+      throw new Error(extractErrorMsg(data.detail, `Server error ${resp.status}`));
     }
 
     const projects = await resp.json();
 
-    // Populate dropdown
-    select.innerHTML = '<option value="">— select project —</option>';
+    // Store full list for filtering
+    state._allProjects = projects;
+
+    // Populate dropdown — using safe DOM methods (no innerHTML)
+    while (select.firstChild) select.removeChild(select.firstChild);
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '— type to search or select —';
+    select.appendChild(defaultOpt);
     projects.forEach(p => {
       const opt = document.createElement('option');
       opt.value = p.key;
@@ -989,6 +1222,16 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
       select.appendChild(opt);
     });
     select.disabled = false;
+
+    // Auto-fill project key if it was extracted from the URL
+    if (_pendingProjectKey) {
+      const keyInput = document.getElementById('project-key-input');
+      if (keyInput) {
+        keyInput.value = _pendingProjectKey;
+        state.projectKey = _pendingProjectKey;
+      }
+      _pendingProjectKey = null;
+    }
 
     // Update state
     state.connected = true;
@@ -1051,6 +1294,8 @@ function loadFile(file) {
 
   const reader = new FileReader();
   reader.onload = e => {
+    document.getElementById('ai-badge').style.display = 'none';
+    document.getElementById('download-generated').style.display = 'none';
     const text = e.target.result;
     document.getElementById('transcript-text').value = text;
     state.transcriptText = text;
@@ -1065,7 +1310,12 @@ function loadFile(file) {
 }
 
 // Textarea input
-document.getElementById('transcript-text').addEventListener('input', function () {
+document.getElementById('transcript-text').addEventListener('input', function (e) {
+  // Only hide AI badges on real user typing, not programmatic value sets
+  if (e.isTrusted !== false) {
+    document.getElementById('ai-badge').style.display = 'none';
+    document.getElementById('download-generated').style.display = 'none';
+  }
   state.transcriptText = this.value;
   // Clear file label if user types
   if (!this.value) {
@@ -1074,9 +1324,18 @@ document.getElementById('transcript-text').addEventListener('input', function ()
   updateAnalyzeBtn();
 });
 
-// Project selection
-document.getElementById('project-select').addEventListener('change', function () {
-  state.projectKey = this.value;
+// Project key input — simple text field, accepts key or URL
+document.getElementById('project-key-input').addEventListener('input', function () {
+  let val = this.value.trim();
+
+  // If user pasted a full Jira URL, extract the project key
+  const urlMatch = val.match(/\/projects\/([A-Z0-9_]+)/i);
+  if (urlMatch) {
+    val = urlMatch[1].toUpperCase();
+    this.value = val;
+  }
+
+  state.projectKey = val.toUpperCase();
   updateAnalyzeBtn();
 });
 
@@ -1115,23 +1374,37 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       // server uses its service-account credentials from env vars.
     };
 
-    const resp = await fetch('/api/v1/process-transcript', {
+    dbg(5, '[Pipeline] POST', `${BASE}/api/v1/process-transcript`);
+    dbg(8, '[Pipeline] Payload keys:', Object.keys(payload), 'transcript length:', transcript.length);
+
+    const resp = await fetch(`${BASE}/api/v1/process-transcript`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify(payload),
     });
 
+    dbg(5, '[Pipeline] Response status:', resp.status);
     hideAlert(infoEl);
 
     if (!resp.ok) {
-      const data = await resp.json().catch(() => ({}));
-      const msg = (data.detail && typeof data.detail === 'object')
-        ? data.detail.message
-        : (data.detail || `Server error ${resp.status}`);
+      const rawErr = await resp.text().catch(() => '');
+      dbgErr(1, '[Pipeline] Error response:', rawErr.substring(0, 500));
+      let errDetail;
+      try { errDetail = JSON.parse(rawErr); } catch (_) { errDetail = { detail: rawErr.substring(0, 200) }; }
+      const msg = extractErrorMsg(errDetail.detail, `Server error ${resp.status}`);
       throw new Error(msg);
     }
 
-    const data = await resp.json();
+    const rawResp = await resp.text();
+    dbg(5, '[Pipeline] Response length:', rawResp.length);
+
+    let data;
+    try { data = JSON.parse(rawResp); } catch (e) {
+      dbgErr(1, '[Pipeline] JSON parse failed. Raw:', rawResp.substring(0, 300));
+      throw new Error('Failed to parse pipeline response: ' + rawResp.substring(0, 200));
+    }
+
+    dbg(5, '[Pipeline] Tickets:', data.tickets ? data.tickets.length : 'none');
 
     if (!data.tickets || data.tickets.length === 0) {
       showAlert(infoEl, 'The pipeline found no actionable items in this transcript. Try a different transcript.');
@@ -1148,6 +1421,30 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       checked:     true,
       deleted:     false,
     }));
+
+    // Check for duplicate tickets in Jira
+    try {
+      const dupResp = await fetch(`${BASE}/api/v1/jira/check-duplicates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          summaries: state.draftTickets.map(t => t.summary),
+          project_key: state.projectKey,
+          base_url: state.baseUrl,
+        }),
+      });
+      if (dupResp.ok) {
+        const dupData = await dupResp.json();
+        dupData.results.forEach((result, idx) => {
+          if (result.duplicates && result.duplicates.length > 0) {
+            state.draftTickets[idx].duplicate_warning = result.duplicates;
+            state.draftTickets[idx].checked = false; // Auto-uncheck potential duplicates
+          }
+        });
+      }
+    } catch (dupErr) {
+      console.warn('Duplicate check failed (non-fatal):', dupErr);
+    }
 
     renderTickets();
     document.getElementById('section-tickets').style.display = 'block';
@@ -1181,6 +1478,9 @@ function renderTickets() {
       <td class="col-sum">
         <input type="text" class="summary-input" data-idx="${idx}" value="${escHtml(ticket.summary)}" />
         ${ticket.result_badge ? ticket.result_badge : ''}
+        ${ticket.duplicate_warning ? ticket.duplicate_warning.map(d =>
+          `<div class="dup-warning">Possible duplicate: <a href="${escHtml(d.url)}" target="_blank">${escHtml(d.key)}</a> — "${escHtml(d.summary)}"</div>`
+        ).join('') : ''}
       </td>
       <td class="col-pri">
         <select class="priority-select" data-idx="${idx}" ${ticket.deleted ? 'disabled' : ''}>
@@ -1299,6 +1599,15 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
 
   setLoading(btn, true);
 
+  // Generate a shared batch ID for all tickets in this submission
+  const now = new Date();
+  const batchId = now.getFullYear().toString()
+    + String(now.getMonth()+1).padStart(2,'0')
+    + String(now.getDate()).padStart(2,'0')
+    + '-' + String(now.getHours()).padStart(2,'0')
+    + String(now.getMinutes()).padStart(2,'0')
+    + String(now.getSeconds()).padStart(2,'0');
+
   let created = 0;
   let failed  = 0;
   const results = [];
@@ -1307,7 +1616,7 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
   for (const ticket of selected) {
     try {
       // Use the submit endpoint (individual ticket creation)
-      const resp = await fetch('/api/v1/submit-ticket', {
+      const resp = await fetch(`${BASE}/api/v1/submit-ticket`, {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
@@ -1316,15 +1625,14 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
           priority:     ticket.priority,
           project_key:  state.projectKey,
           jira_base_url: state.baseUrl,
+          batch_id:     batchId,
           // jira_email and jira_api_token omitted — server uses env var service account
         }),
       });
 
       if (!resp.ok) {
         const data = await resp.json().catch(() => ({}));
-        const msg = (data.detail && typeof data.detail === 'object')
-          ? data.detail.message
-          : (data.detail || `Error ${resp.status}`);
+        const msg = extractErrorMsg(data.detail, `Error ${resp.status}`);
         failed++;
         results.push({ ticket, ok: false, msg });
       } else {
@@ -1381,7 +1689,7 @@ let msalInstance = null;
 
 async function initSSO() {
   try {
-    const resp = await fetch('/api/auth/config');
+    const resp = await fetch(`${BASE}/api/auth/config`);
     if (!resp.ok) return;
     const config = await resp.json();
 
@@ -1430,7 +1738,7 @@ async function handleSignInResult(result) {
 
   // Validate token server-side so the server can trust the identity
   try {
-    const verifyResp = await fetch('/api/auth/verify', {
+    const verifyResp = await fetch(`${BASE}/api/auth/verify`, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body:    JSON.stringify({ id_token: result.idToken }),
@@ -1491,8 +1799,126 @@ document.getElementById('btn-sso-signout').addEventListener('click', async () =>
   }
 });
 
+/* =========================================================================
+   Demo Mode
+========================================================================= */
+document.getElementById('btn-demo-mode').addEventListener('click', () => {
+  document.getElementById('demo-modal').style.display = 'flex';
+});
+document.getElementById('demo-close').addEventListener('click', closeDemoModal);
+document.getElementById('demo-backdrop').addEventListener('click', closeDemoModal);
+function closeDemoModal() {
+  document.getElementById('demo-modal').style.display = 'none';
+}
+// Close on Escape key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && document.getElementById('demo-modal').style.display === 'flex') {
+    closeDemoModal();
+  }
+});
+
+document.getElementById('btn-generate').addEventListener('click', async () => {
+  const btn     = document.getElementById('btn-generate');
+  const errEl   = document.getElementById('demo-error');
+  const infoEl  = document.getElementById('demo-info');
+  const idea    = document.getElementById('demo-idea').value.trim();
+
+  hideAlert(errEl);
+  hideAlert(infoEl);
+
+  if (!idea) {
+    showAlert(errEl, 'Please describe a meeting topic or idea.');
+    return;
+  }
+
+  const detail = document.querySelector('input[name="demo-detail"]:checked').value;
+
+  setLoading(btn, true);
+  showAlert(infoEl, 'Generating transcript... This may take 15-30 seconds.');
+
+  const fetchUrl = `${BASE}/api/v1/generate-transcript`;
+  const fetchBody = JSON.stringify({ idea, detail_level: detail });
+  dbg(5, '[Demo] POST', fetchUrl);
+  dbg(8, '[Demo] Body:', fetchBody);
+
+  try {
+    const resp = await fetch(fetchUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: fetchBody,
+    });
+
+    dbg(5, '[Demo] Response status:', resp.status, resp.statusText);
+    dbg(8, '[Demo] Content-Type:', resp.headers.get('content-type'));
+    dbg(8, '[Demo] Content-Length:', resp.headers.get('content-length'));
+
+    hideAlert(infoEl);
+
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(extractErrorMsg(data.detail, `Server error ${resp.status}`));
+    }
+
+    const rawText = await resp.text();
+    dbg(5, '[Demo] Raw response length:', rawText.length);
+    dbg(7, '[Demo] First 200 chars:', rawText.substring(0, 200));
+    dbg(10, '[Demo] Last 100 chars:', rawText.substring(rawText.length - 100));
+
+    let data;
+    try {
+      data = JSON.parse(rawText);
+    } catch (parseErr) {
+      dbgErr(1, '[Demo] JSON parse failed:', parseErr);
+      throw new Error('Failed to parse server response: ' + rawText.substring(0, 200));
+    }
+
+    dbg(5, '[Demo] Parsed transcript length:', data.transcript ? data.transcript.length : 'NULL');
+    dbg(5, '[Demo] Speakers:', data.speakers);
+
+    if (!data.transcript || data.transcript.length === 0) {
+      dbgErr(1, '[Demo] EMPTY TRANSCRIPT! Full raw:', rawText);
+      throw new Error('Server returned empty transcript. The server may be overloaded — try again.');
+    }
+
+    // Download the transcript as a .txt file
+    const slug = idea.substring(0, 30).replace(/[^a-zA-Z0-9]+/g, '-').toLowerCase();
+    const filename = `transcript-${slug}.txt`;
+    const blob = new Blob([data.transcript], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    // Show success message in the modal
+    showAlert(infoEl, `Downloaded "${filename}" (${data.speakers.length} speakers, ${data.transcript.length} chars). Drag it into the upload area above to continue.`);
+
+  } catch (err) {
+    hideAlert(infoEl);
+    showAlert(errEl, err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+});
+
+document.getElementById('btn-sample').addEventListener('click', () => {
+  window.location.href = `${BASE}/api/v1/sample-transcript`;
+});
+
 // Boot the SSO check on page load
 initSSO();
+
+// Auto-connect to Jira on page load (dcri.atlassian.net is the default)
+// This saves the user from having to click "Connect" manually every time.
+setTimeout(() => {
+  const baseUrlInput = document.getElementById('jira-base-url');
+  if (baseUrlInput && baseUrlInput.value.includes('atlassian.net')) {
+    document.getElementById('btn-connect').click();
+  }
+}, 500);
 </script>
 </body>
 </html>
