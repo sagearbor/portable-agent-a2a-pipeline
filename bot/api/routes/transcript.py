@@ -14,9 +14,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from config.settings import PROVIDER
-from agents import agent1_email, agent2_router, agent3_jira
-from bot.adapters.transcript_adapter import transcript_to_pipeline_input
+from core.config.settings import PROVIDER
+from core.agents import agent1_email, agent2_router, agent3_jira
+from core.adapters.transcript_adapter import transcript_to_pipeline_input
 
 router = APIRouter()
 
@@ -229,7 +229,7 @@ async def submit_ticket(req: SubmitTicketRequest) -> TicketResult:
     finishes editing.  No LLM involved — the summary and description
     are taken verbatim from the request.
     """
-    from tools.jira_tool import create_ticket as _create_ticket, JiraCredentials
+    from core.tools.jira_tool import create_ticket as _create_ticket, JiraCredentials
 
     # Build credentials object (or None to fall back to env vars)
     credentials: JiraCredentials | None = None
@@ -308,7 +308,7 @@ async def enrich_drafts(req: EnrichDraftsRequest):
     to the LLM for intelligent assignment.
     """
     import asyncio
-    from bot.jira_context import (
+    from core.jira_context import (
         query_epics, query_recent_stories, query_sprints,
         query_fix_versions, enrich_draft_tickets,
     )
@@ -417,7 +417,7 @@ async def submit_tickets_batch(req: BatchSubmitRequest) -> BatchSubmitResponse:
     3. Create Stories under their respective epics
     4. Create issue links for dependencies
     """
-    from tools.jira_tool import (
+    from core.tools.jira_tool import (
         create_ticket as _create_ticket,
         create_issue_link as _create_issue_link,
         JiraCredentials,
@@ -537,7 +537,7 @@ async def submit_tickets_batch(req: BatchSubmitRequest) -> BatchSubmitResponse:
                 epic_start = min(child_starts) if child_starts else None
                 epic_due = max(child_dues) if child_dues else None
                 try:
-                    from tools.jira_tool import _client as _jira_client
+                    from core.tools.jira_tool import _client as _jira_client
                     jira_base, jira_auth, jira_hdrs = _jira_client()
                     meta = _requests.get(
                         f"{jira_base}/rest/api/3/issue/{epic_key}/editmeta",
