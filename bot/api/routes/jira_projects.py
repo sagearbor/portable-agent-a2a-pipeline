@@ -25,56 +25,16 @@ code — the caller cannot influence it.  The response body is never forwarded
 verbatim; only extracted project keys and names are returned.
 """
 
-import os
 import requests
-from requests.auth import HTTPBasicAuth
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException, Query
 
+from bot.api.routes._jira_helpers import validate_base_url, get_jira_auth
+
 router = APIRouter()
 
-# ---------------------------------------------------------------------------
-# SSRF allowlist
-# ---------------------------------------------------------------------------
-_ALLOWED_SCHEME   = "https"
-_ALLOWED_HOST_SUFFIX = ".atlassian.net"
-
-
-def _validate_base_url(raw: str) -> str:
-    """
-    Validate that base_url is an https://*.atlassian.net address.
-
-    Returns the normalised base (trailing slash stripped) or raises
-    HTTPException(400) if the URL does not match the allowlist.
-    """
-    parsed = urlparse(raw.strip())
-
-    if parsed.scheme != _ALLOWED_SCHEME:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"base_url must use https://.  "
-                f"Received scheme: '{parsed.scheme or '(none)'}'"
-            ),
-        )
-
-    hostname = (parsed.hostname or "").lower()
-    if not hostname.endswith(_ALLOWED_HOST_SUFFIX):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"base_url hostname must end with '{_ALLOWED_HOST_SUFFIX}'.  "
-                f"Received hostname: '{hostname or '(none)'}'"
-            ),
-        )
-
-    # Reconstruct a clean base — scheme + host only, no path/query/fragment
-    clean = f"{_ALLOWED_SCHEME}://{hostname}"
-    if parsed.port:
-        clean += f":{parsed.port}"
-
-    return clean
+# Backward compatibility — importers that referenced the private name still work
+_validate_base_url = validate_base_url
 
 
 # ---------------------------------------------------------------------------
@@ -99,26 +59,14 @@ async def get_jira_projects(
     covered.
     """
     # -- SSRF guard: validate before any outbound call ---------------------
-    base = _validate_base_url(base_url)
+    base = validate_base_url(base_url)
 
     # Resolve credentials: prefer caller-supplied values, fall back to env vars
-    resolved_email = (email or "").strip() or os.environ.get("JIRA_EMAIL", "")
-    resolved_token = (token or "").strip() or os.environ.get("JIRA_API_TOKEN", "")
-
-    if not resolved_email or not resolved_token:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "No Jira credentials available.  "
-                "Set JIRA_EMAIL and JIRA_API_TOKEN in the server environment."
-            ),
-        )
+    auth = get_jira_auth(email, token)
 
     # The full URL is assembled here from a trusted base and a fixed path.
     # No caller-supplied data appears in the path or query string.
     jira_search_url = f"{base}/rest/api/3/project/search"
-
-    auth    = HTTPBasicAuth(resolved_email, resolved_token)
     headers = {"Accept": "application/json"}
 
     projects: list[dict] = []

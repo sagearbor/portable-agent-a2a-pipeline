@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# Ensure PATH includes az CLI and docker (needed when run from cron)
+export PATH="/dcri/sasusers/home/scb2/.local/bin:/usr/bin:/usr/local/bin:$PATH"
+
 # start-docker.sh — Launch SageJiraBot in Docker with Azure auth
 #
 # On a dev VM, 'az login' tokens can't be used inside Docker (no az CLI).
