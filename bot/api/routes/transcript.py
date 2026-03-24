@@ -526,6 +526,41 @@ async def submit_tickets_batch(req: BatchSubmitRequest) -> BatchSubmitResponse:
                 except Exception as exc:
                     print(f"[batch] Failed to link {blocker_key} -> {blocked_key}: {exc}")
 
+        # Step 4: Set epic dates to span all children (min start, max due)
+        import requests as _requests
+        for epic_info in epics_created:
+            epic_key = epic_info["key"]
+            epic_ref = epic_info["ref"]
+            child_starts = [t.start_date for t in req.tickets if (t.epic_key in (epic_ref, epic_key)) and t.start_date]
+            child_dues = [t.due_date for t in req.tickets if (t.epic_key in (epic_ref, epic_key)) and t.due_date]
+            if child_starts or child_dues:
+                epic_start = min(child_starts) if child_starts else None
+                epic_due = max(child_dues) if child_dues else None
+                try:
+                    from tools.jira_tool import _client as _jira_client
+                    jira_base, jira_auth, jira_hdrs = _jira_client()
+                    meta = _requests.get(
+                        f"{jira_base}/rest/api/3/issue/{epic_key}/editmeta",
+                        auth=jira_auth, headers=jira_hdrs, timeout=10,
+                    )
+                    if meta.ok:
+                        date_update = {}
+                        for fid, fmeta in meta.json().get("fields", {}).items():
+                            fname = fmeta.get("name", "").lower()
+                            if "start" in fname and "date" in fname and epic_start:
+                                date_update[fid] = epic_start
+                            elif fname == "due date" and epic_due:
+                                date_update[fid] = epic_due
+                        if date_update:
+                            _requests.put(
+                                f"{jira_base}/rest/api/3/issue/{epic_key}",
+                                json={"fields": date_update},
+                                auth=jira_auth, headers=jira_hdrs, timeout=10,
+                            )
+                            print(f"[batch] Set epic {epic_key} dates: {date_update}")
+                except Exception as exc:
+                    print(f"[batch] Failed to set epic dates: {exc}")
+
         return BatchSubmitResponse(
             results=results,
             epics_created=epics_created,

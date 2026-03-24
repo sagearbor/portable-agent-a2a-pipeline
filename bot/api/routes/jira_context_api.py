@@ -222,39 +222,64 @@ def _fetch_fix_versions(
         return []
 
 
-def _fetch_assignable_users(
+def _fetch_project_members(
     base: str,
     project_key: str,
     auth,
     headers: dict,
 ) -> list[dict]:
     """
-    Fetch users who can be assigned issues in this project.
-    Uses GET /rest/api/3/user/assignable/search?project=KEY
+    Fetch actual project members (not the full org user list).
+
+    Queries project role memberships and collects unique human users
+    from roles like Administrators, Developers, Scrum Master, etc.
+    Sorted alphabetically by display name.
     """
     try:
-        resp = requests.get(
-            f"{base}/rest/api/3/user/assignable/search",
-            params={"project": project_key, "maxResults": 100},
-            auth=auth,
-            headers=headers,
-            timeout=15,
+        # Get all roles for the project
+        roles_resp = requests.get(
+            f"{base}/rest/api/3/project/{project_key}/role",
+            auth=auth, headers=headers, timeout=15,
         )
-        if not resp.ok:
-            logger.warning("Assignable users query failed %s", resp.status_code)
+        if not roles_resp.ok:
+            logger.warning("Project roles query failed %s", roles_resp.status_code)
             return []
 
+        seen_ids = set()
         users = []
-        for u in resp.json():
-            users.append({
-                "accountId":   u.get("accountId", ""),
-                "displayName": u.get("displayName", ""),
-                "email":       u.get("emailAddress", ""),
-            })
+
+        # Iterate each role and collect human actors
+        # Skip the addons role — it contains app/bot service accounts, not humans
+        skip_roles = {"atlassian-addons-project-access"}
+        for role_name, role_url in roles_resp.json().items():
+            if role_name in skip_roles:
+                continue
+            try:
+                r = requests.get(role_url, auth=auth, headers=headers, timeout=10)
+                if not r.ok:
+                    continue
+                for actor in r.json().get("actors", []):
+                    # Only include human users — skip groups
+                    if actor.get("type") != "atlassian-user-role-actor":
+                        continue
+                    acct = actor.get("actorUser", {}).get("accountId", "")
+                    if not acct or acct in seen_ids:
+                        continue
+                    seen_ids.add(acct)
+                    users.append({
+                        "accountId":   acct,
+                        "displayName": actor.get("displayName", ""),
+                        "email":       actor.get("actorUser", {}).get("emailAddress", ""),
+                    })
+            except Exception:
+                continue
+
+        # Sort alphabetically by display name
+        users.sort(key=lambda u: u["displayName"].lower())
         return users
 
     except Exception as exc:
-        logger.warning("Assignable users query error: %s", exc)
+        logger.warning("Project members query error: %s", exc)
         return []
 
 
@@ -285,7 +310,7 @@ async def get_jira_context(
         epics        = _fetch_epics(base, project_key, auth, headers)
         sprints      = _fetch_sprints(base, project_key, auth, headers)
         fix_versions = _fetch_fix_versions(base, project_key, auth, headers)
-        users        = _fetch_assignable_users(base, project_key, auth, headers)
+        users        = _fetch_project_members(base, project_key, auth, headers)
     except HTTPException:
         raise
     except requests.exceptions.ConnectionError as exc:
