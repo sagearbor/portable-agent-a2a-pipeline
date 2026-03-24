@@ -225,9 +225,13 @@ def create_ticket(
     if fix_version_id:
         fields["fixVersions"] = [{"id": fix_version_id}]
     if start_date:
-        fields["startDate"] = start_date
+        # Try both field names — team-managed uses "startDate",
+        # classic uses a custom field (discovered via editmeta)
+        fields["customfield_13412"] = start_date   # classic project "Start date"
+        fields["startDate"] = start_date            # team-managed fallback
     if due_date:
-        fields["dueDate"] = due_date
+        fields["duedate"] = due_date                # classic (lowercase)
+        fields["dueDate"] = due_date                # team-managed fallback
     if original_estimate:
         fields["timetracking"] = {"originalEstimate": original_estimate}
     if assignee_account_id:
