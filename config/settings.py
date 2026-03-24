@@ -67,4 +67,4 @@ AZURE_AUTH_MODE = os.environ.get("AZURE_AUTH_MODE", "az_login")  # "az_login" | 
 # Temperature / shared inference settings
 # ---------------------------------------------------------------------------
 TEMPERATURE = 0.2   # lower = more deterministic, good for routing agents
-MAX_TOKENS  = 4096  # bumped from 2048 — agent3 needs room for multi-ticket descriptions
+MAX_TOKENS  = 16384  # generous default — truncation causes silent failures that waste days debugging

@@ -137,7 +137,7 @@
       margin-left: var(--sidebar-w);
       flex: 1;
       padding: 32px;
-      max-width: 900px;
+      max-width: 1400px;
     }
 
     /* -----------------------------------------------------------------------
@@ -773,6 +773,23 @@
     .demo-divider {
       border-top: 1px solid var(--border); margin: 16px 0;
     }
+
+    /* -----------------------------------------------------------------------
+       Enhanced ticket table columns
+    ----------------------------------------------------------------------- */
+    .ticket-table .col-epic    { min-width: 150px; }
+    .ticket-table .col-effort  { width: 70px; }
+    .ticket-table .col-sprint  { min-width: 120px; }
+    .ticket-table .col-fixver  { min-width: 120px; }
+    .ticket-table .col-labels  { min-width: 160px; }
+    .ticket-table .col-assign  { min-width: 130px; }
+    .label-pill {
+      display: inline-block; padding: 2px 6px; border-radius: 3px;
+      font-size: 10px; font-weight: 600; margin: 1px;
+    }
+    .label-pill.auto { background: #e8f0fe; color: #1a4f9c; }
+    .label-pill.user { background: #f0f2f8; color: #4a5066; }
+    .ticket-table-wrap { overflow-x: auto; }
   </style>
 </head>
 <body>
@@ -942,9 +959,9 @@
             <span class="info-icon" data-tip="Type the project key (e.g. ST) or paste a Jira URL.&#10;The key is the short code before the ticket number (e.g. ST in ST-42).">ⓘ</span>
           </span>
         </label>
-        <input type="text" id="project-key-input" placeholder="e.g. ST" value="ST" style="text-transform:uppercase;" />
-        <select id="project-select" style="display:none;">
-          <option value="">— connect first —</option>
+        <input type="text" id="project-key-input" placeholder="e.g. ST" value="ST" style="text-transform:uppercase; margin-bottom:4px;" />
+        <select id="project-select" disabled style="font-size:11px;">
+          <option value="">— connect to browse all —</option>
         </select>
       </div>
       <button class="btn btn-primary" id="btn-analyze" disabled
@@ -964,18 +981,26 @@
     <h2>Step 3 — Review Draft Tickets</h2>
     <p class="subtitle">Edit fields, uncheck rows to skip, then click "Create Selected Tickets".</p>
 
+    <div class="ticket-table-wrap">
     <table class="ticket-table" id="ticket-table">
       <thead>
         <tr>
           <th class="col-check"><input type="checkbox" id="chk-all" title="Select all" /></th>
           <th class="col-sum">Summary</th>
+          <th class="col-epic">Epic</th>
+          <th class="col-effort">Effort</th>
           <th class="col-pri">Priority</th>
+          <th class="col-sprint">Sprint</th>
+          <th class="col-fixver">Fix Version</th>
+          <th class="col-labels">Labels</th>
+          <th class="col-assign">Assignee</th>
           <th class="col-desc">Description</th>
           <th class="col-del"></th>
         </tr>
       </thead>
       <tbody id="ticket-tbody"></tbody>
     </table>
+    </div>
 
     <div class="submit-bar">
       <span class="count-label" id="selected-count">0 tickets selected</span>
@@ -1018,8 +1043,10 @@
         <label for="detail-medium">Medium</label>
         <input type="radio" name="demo-detail" value="high" id="detail-high">
         <label for="detail-high">High</label>
+        <input type="radio" name="demo-detail" value="hardest" id="detail-hardest">
+        <label for="detail-hardest">Hardest</label>
       </div>
-      <p class="text-muted" style="margin-top:4px;">Low: quick standup (~5 min). Medium: planning session (~15 min). High: deep design review (~30 min).</p>
+      <p class="text-muted" style="margin-top:4px;">Low: standup (~5 min). Medium: planning (~15 min). High: design review (~30 min). Hardest: full hour meeting (6-8 speakers).</p>
     </div>
 
     <button class="btn btn-primary" id="btn-generate" style="width:100%;">Generate Transcript</button>
@@ -1082,6 +1109,8 @@ const state = {
   transcriptText: '',
   draftTickets: [],   // [{summary, priority, description, email_id, checked, deleted}]
   ssoUser: null,      // {email, name, valid} when signed in via Azure AD SSO; null otherwise
+  jiraContext: { epics: [], sprints: [], fix_versions: [], users: [] },
+  _batchId: null,     // set at submit time for label display
 };
 
 /* =========================================================================
@@ -1242,6 +1271,15 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
     dot.classList.remove('error');
     label.textContent = `Connected — ${projects.length} project${projects.length !== 1 ? 's' : ''} loaded`;
 
+    // Fetch Jira context for the selected project
+    try {
+      const ctxResp = await fetch(`${BASE}/api/v1/jira/context?base_url=${encodeURIComponent(baseUrl)}&project_key=${state.projectKey}`);
+      if (ctxResp.ok) {
+        state.jiraContext = await ctxResp.json();
+        dbg(5, '[Context] Loaded:', state.jiraContext.epics.length, 'epics,', state.jiraContext.sprints.length, 'sprints,', state.jiraContext.fix_versions.length, 'versions');
+      }
+    } catch (e) { dbg(1, '[Context] Failed:', e); }
+
     updateNavSteps();
     updateAnalyzeBtn();
 
@@ -1324,6 +1362,22 @@ document.getElementById('transcript-text').addEventListener('input', function (e
   updateAnalyzeBtn();
 });
 
+// Project dropdown — when user selects from dropdown, update the text input
+document.getElementById('project-select').addEventListener('change', function () {
+  if (this.value) {
+    document.getElementById('project-key-input').value = this.value;
+    state.projectKey = this.value;
+    updateAnalyzeBtn();
+    // Re-fetch context for the new project
+    if (state.connected) {
+      fetch(`${BASE}/api/v1/jira/context?base_url=${encodeURIComponent(state.baseUrl)}&project_key=${state.projectKey}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(d => { if (d) { state.jiraContext = d; dbg(5, '[Context] Loaded:', d.epics.length, 'epics,', d.sprints.length, 'sprints,', d.fix_versions.length, 'versions'); } })
+        .catch(() => {});
+    }
+  }
+});
+
 // Project key input — simple text field, accepts key or URL
 document.getElementById('project-key-input').addEventListener('input', function () {
   let val = this.value.trim();
@@ -1337,6 +1391,14 @@ document.getElementById('project-key-input').addEventListener('input', function 
 
   state.projectKey = val.toUpperCase();
   updateAnalyzeBtn();
+
+  // Re-fetch Jira context when project key changes
+  if (state.connected && state.projectKey.length >= 2) {
+    fetch(`${BASE}/api/v1/jira/context?base_url=${encodeURIComponent(state.baseUrl)}&project_key=${state.projectKey}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(ctx => { if (ctx) { state.jiraContext = ctx; dbg(5, '[Context] Refreshed for', state.projectKey); } })
+      .catch(e => dbg(1, '[Context] Refresh failed:', e));
+  }
 });
 
 function updateAnalyzeBtn() {
@@ -1446,6 +1508,37 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       console.warn('Duplicate check failed (non-fatal):', dupErr);
     }
 
+    // Enrich drafts with epic/effort/scheduling from LLM
+    try {
+      showAlert(infoEl, 'Enriching tickets with project context...');
+      const enrichResp = await fetch(`${BASE}/api/v1/enrich-drafts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          tickets: state.draftTickets,
+          project_key: state.projectKey,
+          base_url: state.baseUrl,
+        }),
+      });
+      if (enrichResp.ok) {
+        const enrichData = await enrichResp.json();
+        dbg(5, '[Enrich] Received', enrichData.tickets.length, 'enriched tickets');
+        dbg(8, '[Enrich] Context:', enrichData.context);
+        state.draftTickets = enrichData.tickets.map((t, i) => ({
+          ...state.draftTickets[i],
+          ...t,
+          checked: state.draftTickets[i] ? state.draftTickets[i].checked : true,
+          deleted: false,
+        }));
+        // Update context with what enrichment returned
+        if (enrichData.context) state.jiraContext = enrichData.context;
+      }
+      hideAlert(infoEl);
+    } catch (e) {
+      dbg(1, '[Enrich] Failed (non-fatal):', e);
+      hideAlert(infoEl);
+    }
+
     renderTickets();
     document.getElementById('section-tickets').style.display = 'block';
     document.getElementById('section-tickets').scrollIntoView({ behavior: 'smooth' });
@@ -1471,6 +1564,33 @@ function renderTickets() {
     tr.dataset.idx = idx;
     if (ticket.deleted) tr.classList.add('deleted');
 
+    // Build epic options
+    let epicOptions = '<option value="">— none —</option>';
+    (state.jiraContext.epics || []).forEach(e => {
+      const sel = ticket.suggested_epic_key === e.key ? ' selected' : '';
+      epicOptions += `<option value="${escHtml(e.key)}"${sel}>${escHtml(e.summary)} (${escHtml(e.key)})</option>`;
+    });
+    // If the ticket has a "new:" epic that was set by enrichment or user
+    if (ticket.suggested_epic_key && ticket.suggested_epic_key.startsWith('new:')) {
+      const newName = ticket.suggested_epic_key.substring(4);
+      epicOptions += `<option value="${escHtml(ticket.suggested_epic_key)}" selected>${escHtml(newName)} (new)</option>`;
+    }
+    epicOptions += '<option value="__create_new__">+ Create New Epic...</option>';
+
+    // Build sprint options
+    let sprintOptions = '<option value="">— none —</option>';
+    (state.jiraContext.sprints || []).forEach(s => {
+      const sel = ticket.suggested_sprint_id == s.id ? ' selected' : '';
+      sprintOptions += `<option value="${s.id}"${sel}>${escHtml(s.name)}</option>`;
+    });
+
+    // Build fix version options
+    let fixverOptions = '<option value="">— none —</option>';
+    (state.jiraContext.fix_versions || []).forEach(v => {
+      const sel = ticket.suggested_fix_version_id == v.id ? ' selected' : '';
+      fixverOptions += `<option value="${escHtml(v.id)}"${sel}>${escHtml(v.name)}</option>`;
+    });
+
     tr.innerHTML = `
       <td class="col-check">
         <input type="checkbox" class="row-check" data-idx="${idx}" ${ticket.checked && !ticket.deleted ? 'checked' : ''} ${ticket.deleted ? 'disabled' : ''} />
@@ -1482,12 +1602,44 @@ function renderTickets() {
           `<div class="dup-warning">Possible duplicate: <a href="${escHtml(d.url)}" target="_blank">${escHtml(d.key)}</a> — "${escHtml(d.summary)}"</div>`
         ).join('') : ''}
       </td>
+      <td class="col-epic">
+        <select class="epic-select" data-idx="${idx}" ${ticket.deleted ? 'disabled' : ''}>
+          ${epicOptions}
+        </select>
+      </td>
+      <td class="col-effort">
+        <input type="text" class="effort-input" data-idx="${idx}" value="${escHtml(ticket.effort || '')}" placeholder="3d" style="width:60px;" ${ticket.deleted ? 'disabled' : ''} />
+      </td>
       <td class="col-pri">
         <select class="priority-select" data-idx="${idx}" ${ticket.deleted ? 'disabled' : ''}>
           ${['Critical','High','Medium','Low'].map(p =>
             `<option value="${p}" ${ticket.priority === p ? 'selected' : ''}>${p}</option>`
           ).join('')}
         </select>
+      </td>
+      <td class="col-sprint">
+        <select class="sprint-select" data-idx="${idx}" ${ticket.deleted ? 'disabled' : ''}>
+          ${sprintOptions}
+        </select>
+      </td>
+      <td class="col-fixver">
+        <select class="fixver-select" data-idx="${idx}" ${ticket.deleted ? 'disabled' : ''}>
+          ${fixverOptions}
+        </select>
+      </td>
+      <td class="col-labels">
+        <span class="label-pill auto">sageJiraBot</span>
+        <span class="label-pill auto">${escHtml(state._batchId || 'batch')}</span>
+        <input type="text" class="extra-labels-input" data-idx="${idx}" value="${escHtml(ticket.extra_labels || '')}" placeholder="add labels..." style="width:80px; font-size:11px;" ${ticket.deleted ? 'disabled' : ''} />
+      </td>
+      <td class="col-assign">
+        <select class="assignee-select" data-idx="${idx}" ${ticket.deleted ? 'disabled' : ''}>
+          <option value="">— unassigned —</option>
+          ${(state.jiraContext.users || []).map(u =>
+            `<option value="${escHtml(u.accountId)}" ${ticket.suggested_assignee_id === u.accountId ? 'selected' : ''}>${escHtml(u.displayName)}</option>`
+          ).join('')}
+        </select>
+        ${ticket.suggested_assignee && !ticket.suggested_assignee_id ? `<span class="text-muted" style="font-size:10px; display:block;">Suggested: ${escHtml(ticket.suggested_assignee)}</span>` : ''}
       </td>
       <td class="col-desc">
         <textarea class="desc-input" data-idx="${idx}" rows="3">${escHtml(ticket.description)}</textarea>
@@ -1520,11 +1672,75 @@ function renderTickets() {
     });
   });
 
+  // Bind epic select changes
+  tbody.querySelectorAll('.epic-select').forEach(sel => {
+    sel.addEventListener('change', function () {
+      const idx = parseInt(this.dataset.idx);
+      if (this.value === '__create_new__') {
+        const name = prompt('Enter new epic name:');
+        if (name && name.trim()) {
+          const newVal = 'new:' + name.trim();
+          const opt = document.createElement('option');
+          opt.value = newVal;
+          opt.textContent = name.trim() + ' (new)';
+          opt.selected = true;
+          this.insertBefore(opt, this.querySelector('[value="__create_new__"]'));
+          state.draftTickets[idx].suggested_epic_key = newVal;
+        } else {
+          this.value = '';
+          state.draftTickets[idx].suggested_epic_key = null;
+        }
+      } else {
+        state.draftTickets[idx].suggested_epic_key = this.value || null;
+      }
+    });
+  });
+
+  // Bind effort input changes
+  tbody.querySelectorAll('.effort-input').forEach(inp => {
+    inp.addEventListener('input', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].effort = this.value;
+    });
+  });
+
   // Bind priority changes
   tbody.querySelectorAll('.priority-select').forEach(sel => {
     sel.addEventListener('change', function () {
       const idx = parseInt(this.dataset.idx);
       state.draftTickets[idx].priority = this.value;
+    });
+  });
+
+  // Bind sprint select changes
+  tbody.querySelectorAll('.sprint-select').forEach(sel => {
+    sel.addEventListener('change', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].suggested_sprint_id = this.value ? parseInt(this.value) : null;
+    });
+  });
+
+  // Bind fix version select changes
+  tbody.querySelectorAll('.fixver-select').forEach(sel => {
+    sel.addEventListener('change', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].suggested_fix_version_id = this.value || null;
+    });
+  });
+
+  // Bind extra labels input changes
+  tbody.querySelectorAll('.extra-labels-input').forEach(inp => {
+    inp.addEventListener('input', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].extra_labels = this.value;
+    });
+  });
+
+  // Bind assignee select changes
+  tbody.querySelectorAll('.assignee-select').forEach(sel => {
+    sel.addEventListener('change', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].suggested_assignee_id = this.value || null;
     });
   });
 
@@ -1607,70 +1823,99 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
     + '-' + String(now.getHours()).padStart(2,'0')
     + String(now.getMinutes()).padStart(2,'0')
     + String(now.getSeconds()).padStart(2,'0');
+  state._batchId = batchId;
 
-  let created = 0;
-  let failed  = 0;
-  const results = [];
+  try {
+    // Build batch request
+    const batchTickets = selected.map((ticket) => ({
+      summary: ticket.summary,
+      description: ticket.description,
+      priority: ticket.priority,
+      epic_key: ticket.suggested_epic_key || null,
+      sprint_id: ticket.suggested_sprint_id ? parseInt(ticket.suggested_sprint_id) : null,
+      fix_version_id: ticket.suggested_fix_version_id || null,
+      start_date: ticket.start_date || null,
+      due_date: ticket.due_date || null,
+      effort: ticket.effort || null,
+      labels: (ticket.extra_labels || '').split(',').map(l => l.trim()).filter(Boolean),
+      suggested_assignee: ticket.suggested_assignee || null,
+      assignee_account_id: ticket.suggested_assignee_id || null,
+      index: state.draftTickets.indexOf(ticket),
+    }));
 
-  // Submit tickets one at a time so we can report per-ticket status
-  for (const ticket of selected) {
-    try {
-      // Use the submit endpoint (individual ticket creation)
-      const resp = await fetch(`${BASE}/api/v1/submit-ticket`, {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({
-          summary:      ticket.summary,
-          description:  ticket.description,
-          priority:     ticket.priority,
-          project_key:  state.projectKey,
-          jira_base_url: state.baseUrl,
-          batch_id:     batchId,
-          // jira_email and jira_api_token omitted — server uses env var service account
-        }),
+    // Collect dependencies
+    const deps = [];
+    selected.forEach(ticket => {
+      const fromIdx = state.draftTickets.indexOf(ticket);
+      (ticket.dependency_indices || []).forEach(depIdx => {
+        if (selected.includes(state.draftTickets[depIdx])) {
+          deps.push({ blocker_index: fromIdx, blocked_index: depIdx });
+        }
       });
+    });
 
-      if (!resp.ok) {
-        const data = await resp.json().catch(() => ({}));
-        const msg = extractErrorMsg(data.detail, `Error ${resp.status}`);
-        failed++;
-        results.push({ ticket, ok: false, msg });
-      } else {
-        const data = await resp.json();
+    dbg(5, '[Batch] Submitting', batchTickets.length, 'tickets with', deps.length, 'dependencies');
+    dbg(8, '[Batch] Tickets:', batchTickets);
+
+    const batchResp = await fetch(`${BASE}/api/v1/submit-tickets-batch`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_key: state.projectKey,
+        base_url: state.baseUrl,
+        batch_id: batchId,
+        tickets: batchTickets,
+        dependencies: deps,
+      }),
+    });
+
+    if (!batchResp.ok) {
+      const data = await batchResp.json().catch(() => ({}));
+      throw new Error(extractErrorMsg(data.detail, `Batch submit error ${batchResp.status}`));
+    }
+
+    const batchData = await batchResp.json();
+    dbg(5, '[Batch] Results:', batchData.results.length, 'epics created:', batchData.epics_created.length, 'links:', batchData.links_created);
+
+    // Process results - update badges
+    let created = 0, failed = 0;
+    batchData.results.forEach(r => {
+      const idx = r.index;
+      if (idx < 0 || idx >= state.draftTickets.length) return;
+      if (r.status === 'created') {
         created++;
-        results.push({ ticket, ok: true, data });
+        state.draftTickets[idx].result_badge =
+          `<a href="${escHtml(r.url)}" target="_blank" class="ticket-status-badge badge-created">${escHtml(r.ticket_id)}</a>`;
+        state.draftTickets[idx].checked = false;
+      } else {
+        failed++;
+        state.draftTickets[idx].result_badge =
+          `<span class="ticket-status-badge badge-error" title="${escHtml(r.error || 'Error')}">Error</span>`;
       }
-    } catch (err) {
-      failed++;
-      results.push({ ticket, ok: false, msg: err.message });
-    }
-  }
+    });
 
-  // Update ticket rows with badges
-  results.forEach(r => {
-    const idx = state.draftTickets.indexOf(r.ticket);
-    if (idx === -1) return;
-    if (r.ok) {
-      const url = r.data && r.data.url ? r.data.url : '#';
-      const key = r.data && r.data.ticket_id ? r.data.ticket_id : 'OK';
-      state.draftTickets[idx].result_badge =
-        `<a href="${escHtml(url)}" target="_blank" class="ticket-status-badge badge-created">${escHtml(key)}</a>`;
-      state.draftTickets[idx].checked = false;
-      state.draftTickets[idx].deleted = false;
+    renderTickets();
+
+    // Build success message with epic info
+    let successMsg = '';
+    if (batchData.epics_created.length > 0) {
+      const epicNames = batchData.epics_created.map(e => `${e.key} ("${e.summary}")`).join(', ');
+      successMsg += `Created ${batchData.epics_created.length} new epic${batchData.epics_created.length !== 1 ? 's' : ''}: ${epicNames}. `;
+    }
+    if (batchData.links_created > 0) {
+      successMsg += `${batchData.links_created} dependency link${batchData.links_created !== 1 ? 's' : ''} created. `;
+    }
+
+    if (failed === 0) {
+      showAlert(successEl, successMsg + `All ${created} ticket${created !== 1 ? 's' : ''} created successfully.`);
+    } else if (created > 0) {
+      showAlert(successEl, successMsg + `${created} ticket${created !== 1 ? 's' : ''} created. ${failed} failed — see error badges above.`);
     } else {
-      state.draftTickets[idx].result_badge =
-        `<span class="ticket-status-badge badge-error" title="${escHtml(r.msg)}">Error</span>`;
+      showAlert(errEl, `Failed to create tickets. Check server credentials and Jira project settings.`);
     }
-  });
 
-  renderTickets();
-
-  if (failed === 0) {
-    showAlert(successEl, `All ${created} ticket${created !== 1 ? 's' : ''} created successfully.`);
-  } else if (created > 0) {
-    showAlert(successEl, `${created} ticket${created !== 1 ? 's' : ''} created. ${failed} failed — see error badges above.`);
-  } else {
-    showAlert(errEl, `Failed to create tickets. Check server credentials and Jira project settings.`);
+  } catch (err) {
+    showAlert(errEl, err.message);
   }
 
   setLoading(btn, false);

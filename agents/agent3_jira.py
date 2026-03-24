@@ -94,8 +94,22 @@ def run(
             **token_limit_kwarg(model, MAX_TOKENS),
         )
         raw = response.choices[0].message.content
+        finish = response.choices[0].finish_reason
+        if finish == "length":
+            print(f"[agent3] WARNING: response truncated (finish_reason=length). Try fewer items.")
+        if not raw:
+            raise RuntimeError(
+                f"LLM returned empty content (finish_reason={finish}). "
+                "Token limit may be too low or content filter triggered."
+            )
 
-    tickets_to_create = json.loads(raw)
+    # Strip markdown code fences if present
+    stripped = raw.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[-1]
+        stripped = stripped.rsplit("```", 1)[0].strip()
+
+    tickets_to_create = json.loads(stripped)
 
     # Call the Jira tool for each ticket (or skip if dry_run)
     results = []

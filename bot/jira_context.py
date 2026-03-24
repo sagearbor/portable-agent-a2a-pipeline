@@ -14,7 +14,7 @@ from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
 from clients.client import get_client, token_limit_kwarg
-from config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
+from config.settings import PROVIDER, TEMPERATURE
 
 load_dotenv()
 
@@ -154,56 +154,179 @@ def query_recent_stories(project_key: str, limit: int = 20) -> list[dict]:
     return stories
 
 
-def match_tickets_to_epics(
+def query_sprints(project_key: str) -> list[dict]:
+    """
+    Get active and future sprints for the project's board.
+    Returns empty list if project uses Kanban (no sprints).
+    """
+    base_url, auth, headers = _client()
+
+    # Find the board for this project
+    try:
+        board_resp = requests.get(
+            f"{base_url}/rest/agile/1.0/board",
+            params={"projectKeyOrId": project_key},
+            auth=auth, headers=headers, timeout=15,
+        )
+        if not board_resp.ok:
+            return []
+
+        boards = board_resp.json().get("values", [])
+        if not boards:
+            return []
+
+        board_id = boards[0]["id"]
+
+        sprint_resp = requests.get(
+            f"{base_url}/rest/agile/1.0/board/{board_id}/sprint",
+            params={"state": "active,future"},
+            auth=auth, headers=headers, timeout=15,
+        )
+        if not sprint_resp.ok:
+            return []
+
+        return [
+            {
+                "id": s["id"],
+                "name": s.get("name", ""),
+                "state": s.get("state", ""),
+                "startDate": s.get("startDate"),
+                "endDate": s.get("endDate"),
+            }
+            for s in sprint_resp.json().get("values", [])
+        ]
+    except Exception:
+        return []
+
+
+def query_fix_versions(project_key: str) -> list[dict]:
+    """Get unreleased fix versions for the project."""
+    base_url, auth, headers = _client()
+
+    try:
+        resp = requests.get(
+            f"{base_url}/rest/api/3/project/{project_key}/version",
+            params={"status": "unreleased", "orderBy": "-sequence"},
+            auth=auth, headers=headers, timeout=15,
+        )
+        if not resp.ok:
+            return []
+
+        return [
+            {
+                "id": str(v["id"]),
+                "name": v.get("name", ""),
+                "releaseDate": v.get("releaseDate"),
+            }
+            for v in resp.json().get("values", resp.json()) if not v.get("released", False)
+        ]
+    except Exception:
+        return []
+
+
+def enrich_draft_tickets(
     draft_tickets: list[dict],
     epics: list[dict],
     stories: list[dict],
+    sprints: list[dict] | None = None,
+    fix_versions: list[dict] | None = None,
 ) -> list[dict]:
     """
-    Use the LLM to suggest the best epic for each draft ticket.
-    Adds suggested_epic_key and suggested_epic_summary fields to each ticket.
+    Use the LLM to enrich draft tickets with epic assignment, effort estimates,
+    scheduling, sprint/version suggestions, and dependency identification.
 
     Args:
         draft_tickets: List of draft ticket dicts (from agent3 dry_run output)
         epics:         List of open epics from query_epics()
         stories:       List of recent stories from query_recent_stories()
+        sprints:       List of active/future sprints (optional)
+        fix_versions:  List of unreleased fix versions (optional)
 
     Returns:
         Same draft_tickets list with added fields:
-          - suggested_epic_key:     "ST-12" or null
-          - suggested_epic_summary: "Epic title" or null
+          - suggested_epic_key:       "ST-12" or "new:Epic Name" or null
+          - suggested_epic_summary:   "Epic title" or null
+          - effort:                   "3d", "8h", etc.
+          - start_date:              ISO date string or null
+          - due_date:                ISO date string or null
+          - suggested_sprint_id:     sprint ID or null
+          - suggested_sprint_name:   sprint name or null
+          - suggested_fix_version_id:   version ID or null
+          - suggested_fix_version_name: version name or null
+          - suggested_assignee:        name from transcript or null
+          - dependency_indices:      list of ticket indices this ticket blocks
     """
     if not draft_tickets:
         return draft_tickets
 
-    if not epics:
-        # No epics to match against — return drafts unchanged
-        for t in draft_tickets:
-            t.setdefault("suggested_epic_key", None)
-            t.setdefault("suggested_epic_summary", None)
-        return draft_tickets
-
     client, model = get_client()
 
+    epic_context = ""
+    if epics:
+        epic_context = (
+            f"\nExisting epics in this project:\n{json.dumps(epics, indent=2)}\n"
+            "Assign tickets to existing epics when they clearly fit. "
+            "If multiple tickets belong to a new feature area not covered by existing epics, "
+            "suggest a new epic with suggested_epic_key = \"new:Epic Name\".\n"
+        )
+    else:
+        epic_context = (
+            "\nNo existing epics. Group related tickets under a new epic "
+            "using suggested_epic_key = \"new:Epic Name\".\n"
+        )
+
+    sprint_context = ""
+    if sprints:
+        sprint_context = (
+            f"\nAvailable sprints:\n{json.dumps(sprints, indent=2)}\n"
+            "Assign tickets to the most appropriate sprint based on timing.\n"
+        )
+
+    version_context = ""
+    if fix_versions:
+        version_context = (
+            f"\nUnreleased fix versions:\n{json.dumps(fix_versions, indent=2)}\n"
+            "Suggest a fix version if appropriate.\n"
+        )
+
     system_prompt = (
-        "You are a Jira context assistant. You receive a list of draft tickets and "
-        "a list of existing Jira epics and recent stories from the same project.\n"
+        "You are a Jira project planning assistant. You receive draft tickets from a "
+        "meeting transcript and existing project context.\n"
         "\n"
-        "For each draft ticket:\n"
-        "- If there is a clearly relevant epic (same feature area or system), "
-        "set suggested_epic_key to that epic's key and suggested_epic_summary to its summary.\n"
-        "- If no epic clearly fits, set both to null.\n"
+        "For each draft ticket, add these fields:\n"
+        "- suggested_epic_key: existing epic key (e.g. \"ST-40\") or \"new:Epic Name\" for a new epic, or null\n"
+        "- suggested_epic_summary: epic summary text\n"
+        "- effort: estimated effort as a Jira duration (e.g. \"3d\", \"8h\", \"1w 2d\")\n"
+        "- start_date: suggested start date as ISO string (YYYY-MM-DD) — stagger based on dependencies\n"
+        "- due_date: suggested due date based on effort and start_date\n"
+        + ("- suggested_sprint_id: sprint ID number or null\n"
+           "- suggested_sprint_name: sprint name or null\n" if sprints else "")
+        + ("- suggested_fix_version_id: version ID string or null\n"
+           "- suggested_fix_version_name: version name or null\n" if fix_versions else "")
+        + "- suggested_assignee: name of the person assigned in the meeting discussion "
+        "(e.g. if someone said 'I will take that' or 'Pandora, can you handle this?'), or null if unclear\n"
+        "- dependency_indices: array of ticket indices (0-based) that THIS ticket blocks (empty if none)\n"
         "\n"
-        "Return the draft_tickets list as JSON with suggested_epic_key and "
-        "suggested_epic_summary fields added to each. "
-        "No explanation, just the JSON array."
+        "Rules for dependencies:\n"
+        "- Only add dependencies when there is a real technical blocker relationship\n"
+        "- Parallel work should NOT be chained — give them the same start_date\n"
+        "- Use realistic effort estimates — not all tickets take the same time\n"
+        "\n"
+        "Keep all existing fields (summary, description, priority, email_id, ticket_id) unchanged.\n"
+        "Return the complete array as JSON. No explanation, just the JSON array."
     )
 
     user_content = (
-        f"Draft tickets:\n{json.dumps(draft_tickets, indent=2)}\n\n"
-        f"Existing epics:\n{json.dumps(epics, indent=2)}\n\n"
-        f"Recent stories (for context):\n{json.dumps(stories[:10], indent=2)}"
+        f"Draft tickets (use array index for dependency_indices):\n"
+        f"{json.dumps(draft_tickets, indent=2)}\n"
+        + epic_context
+        + (f"\nRecent stories (for context):\n{json.dumps(stories[:10], indent=2)}\n" if stories else "")
+        + sprint_context
+        + version_context
     )
+
+    # Use generous token limit — enrichment output can be large
+    enrichment_max_tokens = 8192
 
     if PROVIDER in ("openai_responses", "azure_responses"):
         response = client.responses.create(
@@ -221,9 +344,13 @@ def match_tickets_to_epics(
                 {"role": "user",   "content": user_content},
             ],
             temperature=TEMPERATURE,
-            **token_limit_kwarg(model, MAX_TOKENS),
+            **token_limit_kwarg(model, enrichment_max_tokens),
         )
         raw = response.choices[0].message.content
+
+    if not raw:
+        print("[jira_context] WARNING: LLM returned empty enrichment response")
+        return draft_tickets
 
     # Strip markdown code fences if present
     stripped = raw.strip()
@@ -233,3 +360,13 @@ def match_tickets_to_epics(
 
     enriched = json.loads(stripped)
     return enriched
+
+
+# Keep backward compat alias
+def match_tickets_to_epics(
+    draft_tickets: list[dict],
+    epics: list[dict],
+    stories: list[dict],
+) -> list[dict]:
+    """Legacy wrapper — calls enrich_draft_tickets with epics only."""
+    return enrich_draft_tickets(draft_tickets, epics, stories)

@@ -12,6 +12,7 @@ Endpoints:
     POST /api/v1/jira/check-duplicates    - check for duplicate Jira issues
     POST /api/v1/generate-transcript      - LLM-generated demo transcript
     GET  /api/v1/sample-transcript        - download sample transcript file
+    GET  /api/v1/jira/context             - project context (epics, sprints, versions)
     GET  /                                - web UI (bot/web/index.html)
 
 Phase 2 will add:
@@ -35,6 +36,7 @@ from bot.api.routes.jira_projects import router as jira_projects_router
 from bot.api.routes.auth import router as auth_router
 from bot.api.routes.demo import router as demo_router
 from bot.api.routes.jira_search import router as jira_search_router
+from bot.api.routes.jira_context_api import router as jira_context_api_router
 
 
 # ---------------------------------------------------------------------------
@@ -77,7 +79,8 @@ app = FastAPI(
 app.include_router(transcript_router,    prefix="/api/v1")
 app.include_router(jira_projects_router, prefix="/api/v1")
 app.include_router(demo_router,          prefix="/api/v1")
-app.include_router(jira_search_router,   prefix="/api/v1")
+app.include_router(jira_search_router,       prefix="/api/v1")
+app.include_router(jira_context_api_router,  prefix="/api/v1")
 
 # Mount SSO auth routes at /api/auth
 app.include_router(auth_router, prefix="/api/auth")

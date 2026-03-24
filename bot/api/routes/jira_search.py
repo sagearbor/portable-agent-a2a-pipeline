@@ -11,59 +11,18 @@ SSRF mitigation: same base_url validation as jira_projects.py — only
 https://*.atlassian.net addresses are accepted.
 """
 
-import os
 import re
 import requests
-from requests.auth import HTTPBasicAuth
-from urllib.parse import urlparse
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from bot.api.routes._jira_helpers import validate_base_url, get_jira_auth
+
 router = APIRouter()
 
-
-# ---------------------------------------------------------------------------
-# SSRF allowlist (same pattern as jira_projects.py)
-# ---------------------------------------------------------------------------
-_ALLOWED_SCHEME = "https"
-_ALLOWED_HOST_SUFFIX = ".atlassian.net"
-
-
-def _validate_base_url(raw: str) -> str:
-    """
-    Validate that base_url is an https://*.atlassian.net address.
-
-    Returns the normalised base (trailing slash stripped) or raises
-    HTTPException(400) if the URL does not match the allowlist.
-    """
-    parsed = urlparse(raw.strip())
-
-    if parsed.scheme != _ALLOWED_SCHEME:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"base_url must use https://.  "
-                f"Received scheme: '{parsed.scheme or '(none)'}'"
-            ),
-        )
-
-    hostname = (parsed.hostname or "").lower()
-    if not hostname.endswith(_ALLOWED_HOST_SUFFIX):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"base_url hostname must end with '{_ALLOWED_HOST_SUFFIX}'.  "
-                f"Received hostname: '{hostname or '(none)'}'"
-            ),
-        )
-
-    # Reconstruct a clean base — scheme + host only, no path/query/fragment
-    clean = f"{_ALLOWED_SCHEME}://{hostname}"
-    if parsed.port:
-        clean += f":{parsed.port}"
-
-    return clean
+# Backward compatibility
+_validate_base_url = validate_base_url
 
 
 # ---------------------------------------------------------------------------
@@ -145,22 +104,10 @@ async def check_duplicates(
     4. Returns up to 3 matching issues per summary
     """
     # Validate base_url (SSRF guard)
-    base = _validate_base_url(req.base_url)
+    base = validate_base_url(req.base_url)
 
-    # Resolve credentials — same pattern as jira_projects.py
-    resolved_email = os.environ.get("JIRA_EMAIL", "")
-    resolved_token = os.environ.get("JIRA_API_TOKEN", "")
-
-    if not resolved_email or not resolved_token:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "No Jira credentials available.  "
-                "Set JIRA_EMAIL and JIRA_API_TOKEN in the server environment."
-            ),
-        )
-
-    auth = HTTPBasicAuth(resolved_email, resolved_token)
+    # Resolve credentials via shared helper
+    auth = get_jira_auth()
     headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
     jira_search_url = f"{base}/rest/api/3/search/jql"

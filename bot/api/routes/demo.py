@@ -71,9 +71,19 @@ def _load_speakers() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _DETAIL_WORD_COUNTS = {
-    "low":    (300, 500),
-    "medium": (800, 1200),
-    "high":   (1500, 2500),
+    "low":     (300, 500),
+    "medium":  (800, 1200),
+    "high":    (1500, 2500),
+    "hardest": (4000, 6000),
+}
+
+# Token limits per detail level — must be large enough for the target word count
+# (~1.3 tokens per word + overhead for timestamps/speaker names)
+_DETAIL_TOKEN_LIMITS = {
+    "low":     4096,
+    "medium":  4096,
+    "high":    8192,
+    "hardest": 16384,
 }
 
 
@@ -88,7 +98,7 @@ class GenerateTranscriptRequest(BaseModel):
     @field_validator("detail_level")
     @classmethod
     def validate_detail_level(cls, v: str) -> str:
-        allowed = {"low", "medium", "high"}
+        allowed = {"low", "medium", "high", "hardest"}
         if v.lower() not in allowed:
             raise ValueError(
                 f"detail_level must be one of {sorted(allowed)}, got '{v}'"
@@ -125,9 +135,11 @@ async def generate_transcript(
             detail="idea must not be empty",
         )
 
-    # Step 1: Pick random speakers
+    # Step 1: Pick random speakers (more speakers for longer meetings)
     all_speakers = _load_speakers()
-    num_speakers = random.randint(3, 5)
+    speaker_range = {"low": (3, 4), "medium": (3, 5), "high": (4, 6), "hardest": (6, 8)}
+    lo, hi = speaker_range.get(req.detail_level, (3, 5))
+    num_speakers = random.randint(lo, hi)
     chosen = random.sample(all_speakers, min(num_speakers, len(all_speakers)))
     speaker_names = [s["name"] for s in chosen]
 
@@ -186,7 +198,7 @@ async def generate_transcript(
                         {"role": "user",   "content": user_content},
                     ],
                     temperature=TEMPERATURE,
-                    **token_limit_kwarg(model, _TRANSCRIPT_MAX_TOKENS),
+                    **token_limit_kwarg(model, _DETAIL_TOKEN_LIMITS.get(req.detail_level, 4096)),
                 )
                 choice = response.choices[0]
                 content = choice.message.content

@@ -159,21 +159,34 @@ def create_ticket(
     summary: str,
     description: str,
     priority: str = "Medium",
+    issue_type: str = "Story",
     epic_key: str | None = None,
     credentials: JiraCredentials | None = None,
     labels: list[str] | None = None,
+    sprint_id: int | None = None,
+    fix_version_id: str | None = None,
+    start_date: str | None = None,
+    due_date: str | None = None,
+    original_estimate: str | None = None,
+    assignee_account_id: str | None = None,
 ) -> dict:
     """
     Create a Jira ticket via REST API v3.
 
     Args:
-        summary:     short title for the ticket
-        description: full ticket body (plain text; converted to Atlassian Doc Format)
-        priority:    Critical | High | Medium | Low
-        epic_key:    optional parent epic key (e.g. 'ST-40'); sets the parent link
-        credentials: optional JiraCredentials; if provided, use these instead of
-                     environment variables. Enables the Teams bot and future OAuth
-                     flow to pass per-user or service-account credentials.
+        summary:            short title for the ticket
+        description:        full ticket body (plain text; converted to Atlassian Doc Format)
+        priority:           Critical | High | Medium | Low
+        issue_type:         Jira issue type name — "Epic", "Story", "Sub-task", "Task", "Bug"
+        epic_key:           optional parent key (e.g. 'ST-40'); sets the parent link
+                            (use for Story→Epic or Sub-task→Story relationships)
+        credentials:        optional JiraCredentials; overrides env vars
+        labels:             optional list of label strings
+        sprint_id:          optional sprint ID; issue is moved into this sprint after creation
+        fix_version_id:     optional fixVersion ID string (from /rest/api/3/project/{key}/versions)
+        start_date:         optional ISO date string e.g. "2026-03-25"
+        due_date:           optional ISO date string e.g. "2026-03-28"
+        original_estimate:  optional Jira duration string e.g. "3d", "8h", "1w 2d"
 
     Returns dict with keys: ticket_id, url, status, summary, priority
     """
@@ -187,26 +200,40 @@ def create_ticket(
     jira_priority = _PRIORITY_MAP.get(priority, "Medium")
 
     # Jira REST API v3 uses Atlassian Document Format for description
-    payload = {
-        "fields": {
-            "project":     {"key": project_key},
-            "summary":     summary,
-            "issuetype":   {"name": "Task"},
-            "priority":    {"name": jira_priority},
-            **( {"parent": {"key": epic_key}} if epic_key else {} ),
-            **( {"labels": labels} if labels else {} ),
-            "description": {
-                "type":    "doc",
-                "version": 1,
-                "content": [
-                    {
-                        "type":    "paragraph",
-                        "content": [{"type": "text", "text": description}],
-                    }
-                ],
-            },
-        }
+    fields: dict = {
+        "project":     {"key": project_key},
+        "summary":     summary,
+        "issuetype":   {"name": issue_type},
+        "priority":    {"name": jira_priority},
+        "description": {
+            "type":    "doc",
+            "version": 1,
+            "content": [
+                {
+                    "type":    "paragraph",
+                    "content": [{"type": "text", "text": description}],
+                }
+            ],
+        },
     }
+
+    # Optional fields — only include when provided
+    if epic_key:
+        fields["parent"] = {"key": epic_key}
+    if labels:
+        fields["labels"] = labels
+    if fix_version_id:
+        fields["fixVersions"] = [{"id": fix_version_id}]
+    if start_date:
+        fields["startDate"] = start_date
+    if due_date:
+        fields["dueDate"] = due_date
+    if original_estimate:
+        fields["timetracking"] = {"originalEstimate": original_estimate}
+    if assignee_account_id:
+        fields["assignee"] = {"accountId": assignee_account_id}
+
+    payload = {"fields": fields}
 
     resp = requests.post(
         f"{base_url}/rest/api/3/issue",
@@ -215,6 +242,22 @@ def create_ticket(
         headers=headers,
         timeout=15,
     )
+
+    # If create fails due to unsupported fields, retry without them
+    if resp.status_code == 400 and "cannot be set" in resp.text:
+        droppable = ["startDate", "dueDate", "timetracking", "fixVersions"]
+        dropped = [f for f in droppable if f in fields]
+        if dropped:
+            for f in dropped:
+                del fields[f]
+            print(f"[jira_tool] Retrying without unsupported fields: {dropped}")
+            resp = requests.post(
+                f"{base_url}/rest/api/3/issue",
+                json={"fields": fields},
+                auth=auth,
+                headers=headers,
+                timeout=15,
+            )
 
     if not resp.ok:
         raise RuntimeError(
@@ -225,7 +268,25 @@ def create_ticket(
     ticket_id = data["key"]
     url = f"{base_url}/browse/{ticket_id}"
 
-    print(f"[jira_tool] Created ticket {ticket_id}: '{summary}'")
+    # Sprint assignment uses the Agile REST API (custom field IDs vary by
+    # instance, so we move the issue into the sprint after creation instead
+    # of setting a custom field in the create payload).
+    if sprint_id is not None:
+        sprint_resp = requests.post(
+            f"{base_url}/rest/agile/1.0/sprint/{sprint_id}/issue",
+            json={"issues": [ticket_id]},
+            auth=auth,
+            headers=headers,
+            timeout=15,
+        )
+        if not sprint_resp.ok:
+            print(
+                f"[jira_tool] WARNING: created {ticket_id} but failed to "
+                f"assign to sprint {sprint_id}: {sprint_resp.status_code} "
+                f"{sprint_resp.text}"
+            )
+
+    print(f"[jira_tool] Created {issue_type} {ticket_id}: '{summary}'")
     return {
         "ticket_id": ticket_id,
         "url":       url,
@@ -233,3 +294,54 @@ def create_ticket(
         "summary":   summary,
         "priority":  priority,
     }
+
+
+# ---------------------------------------------------------------------------
+# Issue linking
+# ---------------------------------------------------------------------------
+
+def create_issue_link(
+    inward_key: str,
+    outward_key: str,
+    link_type: str = "Blocks",
+    credentials: JiraCredentials | None = None,
+) -> bool:
+    """
+    Create a link between two Jira issues.
+
+    Args:
+        inward_key:  the blocker issue key   (e.g. "ST-10")
+        outward_key: the blocked issue key   (e.g. "ST-11")
+        link_type:   Jira link type name — "Blocks", "Cloners", "Duplicate", etc.
+        credentials: optional JiraCredentials; overrides env vars
+
+    Returns True on success.
+    Raises RuntimeError on failure.
+
+    Example:
+        # ST-10 blocks ST-11
+        create_issue_link("ST-10", "ST-11")
+    """
+    base_url, auth, headers = _client(credentials)
+
+    payload = {
+        "type":         {"name": link_type},
+        "inwardIssue":  {"key": inward_key},
+        "outwardIssue": {"key": outward_key},
+    }
+
+    resp = requests.post(
+        f"{base_url}/rest/api/3/issueLink",
+        json=payload,
+        auth=auth,
+        headers=headers,
+        timeout=15,
+    )
+
+    if not resp.ok:
+        raise RuntimeError(
+            f"Jira issueLink error {resp.status_code}: {resp.text}"
+        )
+
+    print(f"[jira_tool] Linked {inward_key} --[{link_type}]--> {outward_key}")
+    return True

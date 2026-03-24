@@ -285,3 +285,261 @@ async def submit_ticket(req: SubmitTicketRequest) -> TicketResult:
     finally:
         if key_overridden:
             os.environ["JIRA_PROJECT_KEY"] = original_key
+
+
+# ---------------------------------------------------------------------------
+# Enrich drafts with Jira context (epics, sprints, effort, dependencies)
+# ---------------------------------------------------------------------------
+
+class EnrichDraftsRequest(BaseModel):
+    tickets: list[dict]
+    project_key: str = "ST"
+    base_url: str = "https://dcri.atlassian.net"
+
+
+@router.post("/enrich-drafts")
+async def enrich_drafts(req: EnrichDraftsRequest):
+    """
+    Enrich draft tickets with epic assignments, effort estimates, dates,
+    sprint/version suggestions, assignees, and dependency identification.
+
+    Called by the frontend after process-transcript returns draft tickets.
+    Queries live Jira context (epics, sprints, versions) and passes it
+    to the LLM for intelligent assignment.
+    """
+    import asyncio
+    from bot.jira_context import (
+        query_epics, query_recent_stories, query_sprints,
+        query_fix_versions, enrich_draft_tickets,
+    )
+
+    # Temporarily set project key for jira_context queries
+    original_key = os.environ.get("JIRA_PROJECT_KEY", "ST")
+    os.environ["JIRA_PROJECT_KEY"] = req.project_key
+
+    try:
+        loop = asyncio.get_event_loop()
+
+        # Query Jira context in parallel using thread pool
+        epics_future = loop.run_in_executor(None, query_epics, req.project_key)
+        stories_future = loop.run_in_executor(None, query_recent_stories, req.project_key)
+        sprints_future = loop.run_in_executor(None, query_sprints, req.project_key)
+        versions_future = loop.run_in_executor(None, query_fix_versions, req.project_key)
+
+        epics = await epics_future
+        stories = await stories_future
+        sprints = await sprints_future
+        fix_versions = await versions_future
+
+        # Enrich with LLM (also in thread pool since it's synchronous)
+        enriched = await loop.run_in_executor(
+            None, enrich_draft_tickets,
+            req.tickets, epics, stories, sprints, fix_versions,
+        )
+
+        return {
+            "tickets": enriched,
+            "context": {
+                "epics": epics,
+                "sprints": sprints,
+                "fix_versions": fix_versions,
+            },
+        }
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "error_code": "ENRICHMENT_FAILURE",
+                "message": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    finally:
+        os.environ["JIRA_PROJECT_KEY"] = original_key
+
+
+# ---------------------------------------------------------------------------
+# Batch ticket submission with epic creation and issue linking
+# ---------------------------------------------------------------------------
+
+class BatchTicket(BaseModel):
+    summary: str
+    description: str
+    priority: str = "Medium"
+    epic_key: str | None = None         # "ST-40" or "new:Epic Name" or null
+    sprint_id: int | None = None
+    fix_version_id: str | None = None
+    start_date: str | None = None
+    due_date: str | None = None
+    effort: str | None = None
+    labels: list[str] | None = None
+    suggested_assignee: str | None = None
+    assignee_account_id: str | None = None  # Jira accountId for assignee
+    index: int = 0                      # original array index for dependency mapping
+
+
+class DependencyPair(BaseModel):
+    blocker_index: int
+    blocked_index: int
+
+
+class BatchSubmitRequest(BaseModel):
+    project_key: str = "ST"
+    base_url: str = "https://dcri.atlassian.net"
+    batch_id: str | None = None
+    tickets: list[BatchTicket]
+    dependencies: list[DependencyPair] = []
+
+
+class BatchTicketResult(BaseModel):
+    index: int
+    ticket_id: str
+    url: str
+    status: str
+    summary: str
+    error: str | None = None
+
+
+class BatchSubmitResponse(BaseModel):
+    results: list[BatchTicketResult]
+    epics_created: list[dict] = []
+    links_created: int = 0
+
+
+@router.post("/submit-tickets-batch", response_model=BatchSubmitResponse)
+async def submit_tickets_batch(req: BatchSubmitRequest) -> BatchSubmitResponse:
+    """
+    Create tickets in batch with epic creation and issue linking.
+
+    Flow:
+    1. Group tickets by epic_key
+    2. Create any new epics (epic_key starting with "new:")
+    3. Create Stories under their respective epics
+    4. Create issue links for dependencies
+    """
+    from tools.jira_tool import (
+        create_ticket as _create_ticket,
+        create_issue_link as _create_issue_link,
+        JiraCredentials,
+    )
+
+    batch_ts = req.batch_id or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    base_labels = ["sageJiraBot", batch_ts]
+
+    # Set project key
+    original_key = os.environ.get("JIRA_PROJECT_KEY", "ST")
+    os.environ["JIRA_PROJECT_KEY"] = req.project_key
+
+    results: list[BatchTicketResult] = []
+    epics_created: list[dict] = []
+    # Map from "new:Name" -> created epic key
+    new_epic_map: dict[str, str] = {}
+    # Map from ticket index -> created ticket key
+    index_to_key: dict[int, str] = {}
+
+    try:
+        # Step 1: Create new epics first
+        new_epic_names = set()
+        for t in req.tickets:
+            if t.epic_key and t.epic_key.startswith("new:"):
+                new_epic_names.add(t.epic_key)
+
+        for epic_ref in new_epic_names:
+            epic_name = epic_ref[4:]  # strip "new:" prefix
+            try:
+                result = _create_ticket(
+                    summary=epic_name,
+                    description=f"Epic created by SageJiraBot from meeting transcript.",
+                    issue_type="Epic",
+                    priority="Medium",
+                    labels=base_labels,
+                )
+                new_epic_map[epic_ref] = result["ticket_id"]
+                epics_created.append({
+                    "ref": epic_ref,
+                    "key": result["ticket_id"],
+                    "summary": epic_name,
+                })
+                print(f"[batch] Created Epic {result['ticket_id']}: {epic_name}")
+            except Exception as exc:
+                print(f"[batch] Failed to create Epic '{epic_name}': {exc}")
+
+        # Step 2: Create Stories
+        for ticket in req.tickets:
+            # Resolve epic key
+            resolved_epic = None
+            if ticket.epic_key:
+                if ticket.epic_key.startswith("new:"):
+                    resolved_epic = new_epic_map.get(ticket.epic_key)
+                else:
+                    resolved_epic = ticket.epic_key
+
+            # Merge labels
+            ticket_labels = list(base_labels)
+            if ticket.labels:
+                for lbl in ticket.labels:
+                    if lbl not in ticket_labels:
+                        ticket_labels.append(lbl)
+
+            try:
+                result = _create_ticket(
+                    summary=ticket.summary,
+                    description=ticket.description,
+                    issue_type="Story",
+                    priority=ticket.priority,
+                    epic_key=resolved_epic,
+                    labels=ticket_labels,
+                    sprint_id=ticket.sprint_id,
+                    fix_version_id=ticket.fix_version_id,
+                    start_date=ticket.start_date,
+                    due_date=ticket.due_date,
+                    original_estimate=ticket.effort,
+                    assignee_account_id=ticket.assignee_account_id,
+                )
+                index_to_key[ticket.index] = result["ticket_id"]
+                results.append(BatchTicketResult(
+                    index=ticket.index,
+                    ticket_id=result["ticket_id"],
+                    url=result.get("url", ""),
+                    status="created",
+                    summary=ticket.summary,
+                ))
+            except Exception as exc:
+                results.append(BatchTicketResult(
+                    index=ticket.index,
+                    ticket_id="",
+                    url="",
+                    status="error",
+                    summary=ticket.summary,
+                    error=str(exc),
+                ))
+
+        # Step 3: Create dependency links
+        links_created = 0
+        for dep in req.dependencies:
+            blocker_key = index_to_key.get(dep.blocker_index)
+            blocked_key = index_to_key.get(dep.blocked_index)
+            if blocker_key and blocked_key:
+                try:
+                    _create_issue_link(blocker_key, blocked_key)
+                    links_created += 1
+                except Exception as exc:
+                    print(f"[batch] Failed to link {blocker_key} -> {blocked_key}: {exc}")
+
+        return BatchSubmitResponse(
+            results=results,
+            epics_created=epics_created,
+            links_created=links_created,
+        )
+
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "status": "error",
+                "error_code": "BATCH_ERROR",
+                "message": f"{type(exc).__name__}: {exc}",
+            },
+        )
+    finally:
+        os.environ["JIRA_PROJECT_KEY"] = original_key
