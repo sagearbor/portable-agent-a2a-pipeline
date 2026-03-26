@@ -3,3 +3,4 @@ python-dotenv>=1.0.0
 azure-identity>=1.15.0     # DefaultAzureCredential for managed identity auth
 azure-ai-projects>=1.0.0   # Azure AI Foundry Projects SDK (agent management)
 requests>=2.31.0           # Jira REST API and Microsoft Graph API calls
+fastmcp>=3.0.0             # MCP server framework for tool wrapping

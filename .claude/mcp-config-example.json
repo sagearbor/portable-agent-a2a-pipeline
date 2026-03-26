@@ -1,0 +1,22 @@
+{
+  "mcpServers": {
+    "dcri-jira": {
+      "command": "python",
+      "args": ["mcp_servers/jira_server.py"],
+      "cwd": "/path/to/portable-agent-a2a-pipeline",
+      "env": {
+        "JIRA_BASE_URL": "https://dcri.atlassian.net",
+        "JIRA_EMAIL": "your-email",
+        "JIRA_API_TOKEN": "your-token",
+        "JIRA_PROJECT_KEY": "ST"
+      },
+      "defer_loading": true
+    },
+    "dcri-transcript": {
+      "command": "python",
+      "args": ["mcp_servers/transcript_server.py"],
+      "cwd": "/path/to/portable-agent-a2a-pipeline",
+      "defer_loading": true
+    }
+  }
+}

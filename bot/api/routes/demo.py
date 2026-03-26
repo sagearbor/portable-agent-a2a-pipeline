@@ -20,8 +20,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
-from config.settings import PROVIDER, TEMPERATURE
-from clients.client import get_client, token_limit_kwarg
+from core.config.settings import PROVIDER, TEMPERATURE
+from core.clients.client import get_client, token_limit_kwarg
 
 # Transcript generation needs more tokens than the default MAX_TOKENS (2048)
 # A "low" detail transcript is ~500 words (~700 tokens), but "high" can be 2500+ words

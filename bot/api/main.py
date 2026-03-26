@@ -30,7 +30,7 @@ from fastapi.staticfiles import StaticFiles
 # Load .env before importing anything that reads env vars
 load_dotenv()
 
-from config.settings import PROVIDER
+from core.config.settings import PROVIDER
 from bot.api.routes.transcript import router as transcript_router
 from bot.api.routes.jira_projects import router as jira_projects_router
 from bot.api.routes.auth import router as auth_router
