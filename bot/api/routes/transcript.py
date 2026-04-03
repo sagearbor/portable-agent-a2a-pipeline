@@ -4,12 +4,18 @@ POST /api/v1/process-transcript
 Accepts a meeting transcript and runs the 3-agent pipeline to produce
 Jira tickets. Supports dry_run mode to preview tickets without creating them.
 
+Uses an async job pattern: the POST returns a job_id immediately, and
+the client polls GET /api/v1/job/{job_id} for results.  This avoids
+NGINX proxy_read_timeout (default 60s) killing long-running pipelines.
+
 Route is mounted at /api/v1 in bot/api/main.py, so the full path is:
     POST /api/v1/process-transcript
 """
 
 import os
 import time
+import threading
+import uuid
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -17,6 +23,110 @@ from pydantic import BaseModel
 from core.config.settings import PROVIDER
 from core.agents import agent1_email, agent2_router, agent3_jira
 from core.adapters.transcript_adapter import transcript_to_pipeline_input
+
+
+# ---------------------------------------------------------------------------
+# In-memory job store for async pipeline execution
+# ---------------------------------------------------------------------------
+_jobs: dict[str, dict] = {}
+
+
+def _run_pipeline_job(job_id: str, req_data: dict):
+    """Run the 3-agent pipeline in a background thread."""
+    job = _jobs[job_id]
+    start = time.time()
+
+    transcript = req_data["transcript"]
+    meeting_title = req_data["meeting_title"]
+    effective_project_key = req_data["effective_project_key"]
+    original_project_key = req_data["original_project_key"]
+    key_overridden = req_data["key_overridden"]
+    dry_run = req_data["dry_run"]
+    jira_creds = req_data["jira_creds"]
+
+    if key_overridden:
+        os.environ["JIRA_PROJECT_KEY"] = effective_project_key
+
+    try:
+        # Step 1: Convert transcript to email-shaped items
+        job["stage"] = "chunking"
+        items = transcript_to_pipeline_input(
+            transcript=transcript,
+            meeting_title=meeting_title,
+        )
+        job["segments"] = len(items)
+
+        if not items:
+            job["status"] = "complete"
+            job["result"] = {
+                "status": "success", "provider": PROVIDER,
+                "meeting_title": meeting_title,
+                "project_key": effective_project_key,
+                "tickets_drafted": 0, "tickets_created": 0,
+                "dry_run": dry_run,
+                "elapsed_seconds": round(time.time() - start, 2),
+                "tickets": [], "error_message": None,
+            }
+            return
+
+        # Step 2: Agent 1
+        job["stage"] = "agent1"
+        email_extracts = agent1_email.run_on_items(items)
+
+        # Step 3: Agent 2
+        job["stage"] = "agent2"
+        approved_items = agent2_router.run(email_extracts=email_extracts)
+
+        # Step 4: Agent 3
+        job["stage"] = "agent3"
+        raw_tickets = agent3_jira.run(
+            approved_items=approved_items,
+            dry_run=dry_run,
+            jira_creds=jira_creds,
+        )
+
+        # Build response
+        tickets = [
+            {
+                "ticket_id": t["ticket_id"],
+                "url": t.get("url", ""),
+                "status": t["status"],
+                "summary": t["summary"],
+                "priority": t.get("priority", "Medium"),
+                "description": t.get("description", ""),
+            }
+            for t in raw_tickets
+        ]
+        drafts = [t for t in tickets if t["status"] == "draft"]
+        created = [t for t in tickets if t["status"] == "created"]
+
+        job["status"] = "complete"
+        job["result"] = {
+            "status": "success", "provider": PROVIDER,
+            "meeting_title": meeting_title,
+            "project_key": effective_project_key,
+            "tickets_drafted": len(drafts),
+            "tickets_created": len(created),
+            "dry_run": dry_run,
+            "elapsed_seconds": round(time.time() - start, 2),
+            "tickets": tickets, "error_message": None,
+        }
+
+    except Exception as exc:
+        job["status"] = "error"
+        job["result"] = {
+            "status": "error", "provider": PROVIDER,
+            "meeting_title": meeting_title,
+            "project_key": effective_project_key,
+            "tickets_drafted": 0, "tickets_created": 0,
+            "dry_run": dry_run,
+            "elapsed_seconds": round(time.time() - start, 2),
+            "tickets": [],
+            "error_message": f"{type(exc).__name__}: {exc}",
+        }
+    finally:
+        if key_overridden:
+            os.environ["JIRA_PROJECT_KEY"] = original_project_key
 
 router = APIRouter()
 
@@ -67,34 +177,31 @@ class TranscriptResponse(BaseModel):
 # Route handler
 # ---------------------------------------------------------------------------
 
-@router.post("/process-transcript", response_model=TranscriptResponse)
-async def process_transcript(req: TranscriptRequest) -> TranscriptResponse:
+@router.post("/process-transcript")
+async def process_transcript(req: TranscriptRequest):
     """
-    Convert a meeting transcript into Jira tickets via the 3-agent pipeline.
+    Launch the 3-agent pipeline in a background thread and stream
+    keep-alive pings until it completes.  This prevents NGINX's
+    proxy_read_timeout (default 60s) from killing long pipelines.
 
-    1. Validates the transcript is non-empty
-    2. Converts transcript text to email-shaped dicts via transcript_adapter
-    3. Runs agent1 (structure extraction) -> agent2 (routing) -> agent3 (ticket creation)
-    4. Returns draft or created tickets depending on dry_run flag
+    The response is a stream of newline-delimited JSON:
+      {"ping": true, "stage": "agent1", "elapsed": 15}   ← keep-alive
+      {"ping": true, "stage": "agent2", "elapsed": 75}   ← keep-alive
+      {"status": "success", "tickets": [...], ...}        ← final result (last line)
+
+    The old frontend (cached by NGINX) reads resp.text() then JSON.parse(),
+    which will see the LAST line — the final result — because we ensure
+    only the last line is valid JSON for the full response shape.
     """
-    # Validate input
+    import asyncio
+    from starlette.responses import StreamingResponse
+
     if not req.transcript or not req.transcript.strip():
-        raise HTTPException(
-            status_code=422,
-            detail="transcript must not be empty"
-        )
+        raise HTTPException(status_code=422, detail="transcript must not be empty")
 
-    start = time.time()
-
-    # Temporarily override JIRA_PROJECT_KEY if a non-default project is specified.
-    # req.jira_project_key (from the UI) takes precedence over req.project_key.
     effective_project_key = req.jira_project_key or req.project_key
     original_project_key = os.environ.get("JIRA_PROJECT_KEY", "ST")
-    key_overridden = effective_project_key != original_project_key
-    if key_overridden:
-        os.environ["JIRA_PROJECT_KEY"] = effective_project_key
 
-    # Build optional credential overrides dict for agent3
     jira_creds: dict | None = None
     if req.jira_base_url or req.jira_email or req.jira_api_token:
         jira_creds = {
@@ -106,94 +213,70 @@ async def process_transcript(req: TranscriptRequest) -> TranscriptResponse:
             }.items() if v is not None
         }
 
-    try:
-        # Step 1: Convert transcript to email-shaped items
-        items = transcript_to_pipeline_input(
-            transcript=req.transcript,
-            meeting_title=req.meeting_title,
-        )
+    job_id = str(uuid.uuid4())[:8]
+    _jobs[job_id] = {
+        "status": "running",
+        "stage": "starting",
+        "segments": 0,
+        "result": None,
+    }
 
-        if not items:
-            return TranscriptResponse(
-                status="success",
-                provider=PROVIDER,
-                meeting_title=req.meeting_title,
-                project_key=effective_project_key,
-                tickets_drafted=0,
-                tickets_created=0,
-                dry_run=req.dry_run,
-                elapsed_seconds=round(time.time() - start, 2),
-                tickets=[],
-            )
+    req_data = {
+        "transcript": req.transcript,
+        "meeting_title": req.meeting_title,
+        "effective_project_key": effective_project_key,
+        "original_project_key": original_project_key,
+        "key_overridden": effective_project_key != original_project_key,
+        "dry_run": req.dry_run,
+        "jira_creds": jira_creds,
+    }
 
-        # Step 2: Agent 1 — extract structure from transcript segments
-        email_extracts = agent1_email.run_on_items(items)
+    thread = threading.Thread(target=_run_pipeline_job, args=(job_id, req_data), daemon=True)
+    thread.start()
 
-        # Step 3: Agent 2 — route and filter to actionable items only
-        approved_items = agent2_router.run(email_extracts=email_extracts)
+    import json as _json
 
-        # Step 4: Agent 3 — write ticket descriptions and create (or draft)
-        raw_tickets = agent3_jira.run(
-            approved_items=approved_items,
-            dry_run=req.dry_run,
-            jira_creds=jira_creds,
-        )
+    async def _stream():
+        """
+        Yield whitespace keep-alive bytes every 10s to prevent NGINX
+        proxy_read_timeout, then the final JSON result.
 
-        # Step 5: Build response
-        tickets = [
-            TicketResult(
-                ticket_id=t["ticket_id"],
-                url=t.get("url", ""),
-                status=t["status"],
-                summary=t["summary"],
-                priority=t.get("priority", "Medium"),
-                description=t.get("description", ""),
-            )
-            for t in raw_tickets
-        ]
+        The client receives:  "   \\n   \\n   \\n{...actual JSON...}"
+        JSON.parse() ignores leading whitespace, so the old frontend
+        code (resp.text() → JSON.parse()) works unchanged.
+        """
+        start = time.time()
+        while True:
+            await asyncio.sleep(10)
+            job = _jobs.get(job_id)
+            if not job or job["status"] != "running":
+                break
+            # Whitespace keeps the connection alive; JSON.parse ignores it
+            yield " \n"
 
-        drafts = [t for t in tickets if t.status == "draft"]
-        created = [t for t in tickets if t.status == "created"]
+        # Final result — the only actual JSON in the stream
+        job = _jobs.pop(job_id, None)
+        if job and job["result"]:
+            yield _json.dumps(job["result"])
+        else:
+            yield _json.dumps({"status": "error", "error_message": "Job lost"})
 
-        return TranscriptResponse(
-            status="success",
-            provider=PROVIDER,
-            meeting_title=req.meeting_title,
-            project_key=effective_project_key,
-            tickets_drafted=len(drafts),
-            tickets_created=len(created),
-            dry_run=req.dry_run,
-            elapsed_seconds=round(time.time() - start, 2),
-            tickets=tickets,
-        )
+    return StreamingResponse(_stream(), media_type="application/json")
 
-    except RuntimeError as exc:
-        # Jira API errors or pipeline errors
-        elapsed = round(time.time() - start, 2)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "status": "error",
-                "error_code": "PIPELINE_FAILURE",
-                "message": str(exc),
-                "elapsed_seconds": elapsed,
-            }
-        )
-    except Exception as exc:
-        elapsed = round(time.time() - start, 2)
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "status": "error",
-                "error_code": "PIPELINE_FAILURE",
-                "message": f"Unexpected error: {type(exc).__name__}: {exc}",
-                "elapsed_seconds": elapsed,
-            }
-        )
-    finally:
-        # Restore original project key
-        if key_overridden:
-            os.environ["JIRA_PROJECT_KEY"] = original_project_key
+
+@router.get("/job/{job_id}")
+async def get_job_status(job_id: str):
+    """Poll for pipeline job status and results (alternative to streaming)."""
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    if job["status"] == "running":
+        return {"status": "running", "stage": job["stage"], "segments": job["segments"]}
+
+    result = job["result"]
+    del _jobs[job_id]
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -70,7 +70,20 @@ def run(email_extracts: list[dict]) -> list[dict]:
         )
         raw = response.choices[0].message.content
 
-    approved = json.loads(raw)
+    # Guard against empty / None LLM responses
+    if not raw:
+        raise RuntimeError(
+            f"[agent2] LLM returned empty content. Possible content filter or token limit issue."
+        )
+
+    # Strip markdown code fences if LLM wraps output in ```json ... ```
+    stripped = raw.strip()
+    if stripped.startswith("```"):
+        stripped = stripped.split("\n", 1)[-1]
+        stripped = stripped.rsplit("```", 1)[0].strip()
+
+    print(f"[agent2] Raw LLM response (first 300 chars): {stripped[:300]}")
+    approved = json.loads(stripped)
     print(f"[agent2] Approved {len(approved)} items for ticket creation")
     for item in approved:
         print(f"  -> {item.get('suggested_jira_summary', '?')}  [{item.get('suggested_priority', '?')}]")

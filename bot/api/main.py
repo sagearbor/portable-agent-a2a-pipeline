@@ -24,7 +24,7 @@ from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 # Load .env before importing anything that reads env vars
@@ -71,7 +71,7 @@ app = FastAPI(
         "POST a meeting transcript and receive structured Jira tickets. "
         "Part of the portable-agent-a2a-pipeline project."
     ),
-    version="1.0.0",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -106,21 +106,48 @@ async def health() -> JSONResponse:
         status_code=200,
         content={
             "status": "ok",
-            "version": "1.0.0",
+            "version": "0.3.0",
             "provider": PROVIDER,
             "jira_project": os.environ.get("JIRA_PROJECT_KEY", "ST"),
         }
     )
 
 
+@app.get("/api/v1/ping")
+async def ping():
+    """Cache-proof version check — new endpoint NGINX has never cached."""
+    import datetime
+    return {"v": "0.3.0", "t": datetime.datetime.now().isoformat()}
+
+
 # ---------------------------------------------------------------------------
 # Static file serving — web UI
-# Must be mounted LAST so API routes take precedence.
+#
+# NGINX proxy-cached the StaticFiles response for "/" (has etag + last-modified)
+# and won't let go.  sageapp05 avoids this by serving HTML at "/ui" without
+# those headers (Jinja2 template → no etag).  We do the same: explicit "/ui"
+# route returns HTMLResponse (no etag/last-modified → not proxy-cached).
+# StaticFiles still serves CSS/JS/images at other paths.
 # ---------------------------------------------------------------------------
 
 import pathlib as _pathlib
 
 _web_dir = _pathlib.Path(__file__).parent.parent / "web"
+_index_html = _web_dir / "index.html"
+
+
+@app.get("/ui")
+async def serve_ui():
+    """Serve index.html without etag/last-modified so NGINX won't cache it."""
+    return HTMLResponse(content=_index_html.read_text(encoding="utf-8"))
+
+
+@app.get("/v2")
+async def serve_v2():
+    """Fresh URL that NGINX has never cached."""
+    return HTMLResponse(content=_index_html.read_text(encoding="utf-8"))
+
+
 if _web_dir.is_dir():
     app.mount("/", StaticFiles(directory=str(_web_dir), html=True), name="web")
 

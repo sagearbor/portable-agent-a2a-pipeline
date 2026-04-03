@@ -92,12 +92,19 @@ def _extract_from_emails(emails: list[dict]) -> list[dict]:
         )
         raw = response.choices[0].message.content
 
+    # Guard against empty / None LLM responses
+    if not raw:
+        raise RuntimeError(
+            f"[agent1] LLM returned empty content. Possible content filter or token limit issue."
+        )
+
     # Strip markdown code fences if LLM wraps output in ```json ... ```
     stripped = raw.strip()
     if stripped.startswith("```"):
         stripped = stripped.split("\n", 1)[-1]
         stripped = stripped.rsplit("```", 1)[0].strip()
 
+    print(f"[agent1] Raw LLM response (first 300 chars): {stripped[:300]}")
     extracted = json.loads(stripped)
     print(f"[agent1] Extracted {len(extracted)} email records")
     return extracted

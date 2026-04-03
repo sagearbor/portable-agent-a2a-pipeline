@@ -1100,6 +1100,20 @@ const BASE = (() => {
 })();
 
 /* =========================================================================
+   Version badge — fetched from container so it shows even when NGINX
+   serves a cached copy of this HTML file.
+========================================================================= */
+fetch(`${BASE}/health`).then(r => r.json()).then(d => {
+  if (d.version) {
+    const h1 = document.querySelector('.logo h1');
+    if (h1 && !h1.querySelector('sub')) {
+      h1.insertAdjacentHTML('beforeend',
+        ` <sub style="font-size:0.4em;opacity:0.6">v${d.version}</sub>`);
+    }
+  }
+}).catch(() => {});
+
+/* =========================================================================
    State
 ========================================================================= */
 const state = {
@@ -1422,7 +1436,9 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
   const transcript = (document.getElementById('transcript-text').value || '').trim();
   const meetingTitle = document.getElementById('meeting-title').value.trim() || 'Meeting';
 
-  showAlert(infoEl, 'Running pipeline in dry-run mode. This may take 10-30 seconds...');
+  const estMin = Math.max(1, Math.round(transcript.length / 20000));
+  const timeMsg = estMin <= 1 ? 'about 1 minute' : `about ${estMin} minutes`;
+  showAlert(infoEl, `Running pipeline in dry-run mode. Estimated time: ${timeMsg} (3 LLM calls on ${Math.round(transcript.length/1000)}k chars)...`);
 
   try {
     const payload = {

@@ -158,7 +158,7 @@ def clean_transcript(text: str) -> str:
 def transcript_to_pipeline_input(
     transcript: str,
     meeting_title: str = "Meeting",
-    max_chunk_chars: int = 3000,
+    max_chunk_chars: int = 6000,
 ) -> list[dict]:
     """
     Convert a meeting transcript into a list of email-shaped dicts
@@ -193,11 +193,14 @@ def transcript_to_pipeline_input(
     if not lines:
         return []
 
-    # Step 3: group lines into chunks of ~5 turns, respecting max_chunk_chars
+    # Step 3: group lines into chunks.  Larger chunks → fewer segments →
+    # smaller prompt for Agent 1 (which processes all segments in one LLM call).
+    # A 1-hour transcript at 5 turns/chunk produces ~240 segments and a ~24K-token
+    # prompt whose JSON response exceeds MAX_TOKENS.  30 turns/chunk keeps it ~40.
     chunks: list[list[str]] = []
     current_chunk: list[str] = []
     current_chars = 0
-    TURNS_PER_CHUNK = 5
+    TURNS_PER_CHUNK = 30
 
     for line in lines:
         line_chars = len(line)
