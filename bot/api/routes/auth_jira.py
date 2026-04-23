@@ -337,9 +337,19 @@ async def jira_callback(
     }
     request.session[_SID_KEY] = sid
 
-    # Redirect back to the UI.  Use an explicit post-login target so we do
-    # not accept arbitrary open-redirect targets via user input.
-    post_login = (os.environ.get("ATLASSIAN_OAUTH_POST_LOGIN_REDIRECT") or "/").strip()
+    # Redirect back to the UI.  Prefer an explicit env override; otherwise
+    # derive the app root from the registered callback URL by stripping the
+    # known ``/api/v1/auth/jira/callback`` suffix.  This auto-adapts across
+    # environments (localhost, /sageapp06/ behind NGINX, Azure Container
+    # Apps) without requiring a separate env var per deployment.  We never
+    # use a user-supplied value here, so this is not an open-redirect risk.
+    post_login = (os.environ.get("ATLASSIAN_OAUTH_POST_LOGIN_REDIRECT") or "").strip()
+    if not post_login:
+        cb_path = "/api/v1/auth/jira/callback"
+        if redirect_uri.endswith(cb_path):
+            post_login = redirect_uri[: -len(cb_path)] + "/"
+        else:
+            post_login = "/"
     return RedirectResponse(post_login)
 
 
