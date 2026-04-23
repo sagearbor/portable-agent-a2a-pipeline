@@ -30,6 +30,11 @@ services:
     # For local dev: docker-compose will pick up .env automatically
     env_file:
       - .env
+    volumes:
+      # Per-user prefs (last Jira project, etc.) — survives container rebuilds.
+      # TODO: when migrating to Azure Container Apps, swap this for Azure Table
+      # Storage since ACA has ephemeral local storage.
+      - ./data:/app/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:3006/health')"]

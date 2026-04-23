@@ -21,12 +21,42 @@ Environment variables required:
     SESSION_SECRET                  (used by SessionMiddleware to sign
                                      session cookies; any long random string)
 
-Scopes requested (all must also be enabled on the Atlassian OAuth app):
-    read:jira-work    list projects, read issues, comments, metadata
-    write:jira-work   create/edit issues
-    read:jira-user    user search (assignee picker), user profile lookup
-    read:me           signed-in user's own profile (for "Signed in as ..." UI)
-    offline_access    refresh tokens (auto-renew the 1-hour access token)
+Scopes requested (granular — all must also be enabled on the Atlassian OAuth
+app under Permissions → Jira API → Configure → Granular scopes):
+
+  Issue reads (for `/rest/api/3/search/jql` — the new enhanced JQL endpoint):
+    read:jql:jira               run JQL
+    read:issue:jira             read issue
+    read:issue-details:jira     issue fields/body
+    read:issue-meta:jira        issue metadata
+    read:issue-type:jira        issue type info
+    read:status:jira            status info
+    read:field:jira             field definitions
+
+  Project reads (projects, roles, versions):
+    read:project:jira
+    read:project.role:jira
+    read:project-version:jira
+    read:project-category:jira
+
+  People reads (assignee picker + role members):
+    read:user:jira
+    read:avatar:jira
+    read:group:jira
+    read:application-role:jira
+
+  Agile (sprints/boards):
+    read:board-scope:jira-software
+    read:sprint:jira-software
+
+  Writes (ticket creation + linking):
+    write:issue:jira
+    write:comment:jira
+    write:issue-link:jira
+
+  Identity + refresh:
+    read:me                     signed-in user's own profile
+    offline_access              refresh tokens
 
 Confluence scopes are intentionally NOT requested here — enable them on the
 Atlassian OAuth app so they are available, but only add to this string when
@@ -62,7 +92,25 @@ _AUTHORIZE_URL  = "https://auth.atlassian.com/authorize"
 _TOKEN_URL      = "https://auth.atlassian.com/oauth/token"  # nosec — public Atlassian endpoint, not a secret
 _ACCESSIBLE_URL = "https://api.atlassian.com/oauth/token/accessible-resources"
 
-_SCOPES = "read:jira-work write:jira-work read:jira-user read:me offline_access"
+_SCOPES = (
+    # Classic scopes — still required for endpoints like /project/search
+    # that Atlassian kept on the classic scope model even under granular-enabled
+    # 3LO. Both classic + granular must be enabled on the app registration.
+    "read:jira-work write:jira-work read:jira-user "
+    # Granular issue reads (required for the enhanced /rest/api/3/search/jql)
+    "read:jql:jira read:issue:jira read:issue-details:jira read:issue-meta:jira "
+    "read:issue-type:jira read:status:jira read:field:jira "
+    # Granular project reads
+    "read:project:jira read:project.role:jira read:project-version:jira read:project-category:jira "
+    # Granular people reads
+    "read:user:jira read:avatar:jira read:group:jira read:application-role:jira "
+    # Granular agile
+    "read:board-scope:jira-software read:sprint:jira-software "
+    # Granular writes
+    "write:issue:jira write:comment:jira write:issue-link:jira "
+    # Identity + refresh
+    "read:me offline_access"
+)
 
 _SID_KEY   = "jira_sid"          # small session-id pointer; value lives in _TOKEN_STORE
 _STATE_KEY = "jira_oauth_state"  # session dict entry for CSRF state

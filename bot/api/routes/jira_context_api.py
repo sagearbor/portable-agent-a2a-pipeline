@@ -258,9 +258,17 @@ def _fetch_project_members(
         for role_name, role_url in roles_resp.json().items():
             if role_name in skip_roles:
                 continue
+            # Jira returns absolute URLs pointing at the site host
+            # (https://<site>.atlassian.net/...). Under OAuth 3LO we must hit
+            # api.atlassian.com/ex/jira/{cloud_id} instead, so rewrite the URL
+            # to use the same `base` we used for the roles call.
+            idx = role_url.find("/rest/")
+            if idx != -1:
+                role_url = f"{base}{role_url[idx:]}"
             try:
                 r = requests.get(role_url, auth=auth, headers=headers, timeout=10)
                 if not r.ok:
+                    logger.warning("Role %s query failed %s", role_name, r.status_code)
                     continue
                 for actor in r.json().get("actors", []):
                     # Only include human users — skip groups
@@ -306,6 +314,9 @@ async def get_jira_context(
     boards have no sprints) the others still return data.
 
     Auth preference: OAuth session token when signed in, else service-account.
+    (Granular scopes read:jql:jira + read:issue:jira + read:issue-details:jira
+    + read:issue-meta:jira must be granted on the Atlassian OAuth app for
+    /rest/api/3/search/jql to succeed under OAuth 3LO.)
     """
     # SSRF guard
     base_validated = validate_base_url(base_url)
@@ -319,12 +330,13 @@ async def get_jira_context(
     headers = dict(cfg.kwargs.get("headers", {}))
     headers.setdefault("Accept", "application/json")
     headers.setdefault("Content-Type", "application/json")
+    base = cfg.base
 
     try:
-        epics        = _fetch_epics(cfg.base, project_key, auth, headers)
-        sprints      = _fetch_sprints(cfg.base, project_key, auth, headers)
-        fix_versions = _fetch_fix_versions(cfg.base, project_key, auth, headers)
-        users        = _fetch_project_members(cfg.base, project_key, auth, headers)
+        epics        = _fetch_epics(base, project_key, auth, headers)
+        sprints      = _fetch_sprints(base, project_key, auth, headers)
+        fix_versions = _fetch_fix_versions(base, project_key, auth, headers)
+        users        = _fetch_project_members(base, project_key, auth, headers)
     except HTTPException:
         raise
     except requests.exceptions.ConnectionError as exc:

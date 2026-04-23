@@ -99,6 +99,7 @@ def _run_pipeline_job(job_id: str, req_data: dict):
                 "summary": t["summary"],
                 "priority": t.get("priority", "Medium"),
                 "description": t.get("description", ""),
+                "suggested_assignee": t.get("suggested_assignee"),
             }
             for t in raw_tickets
         ]
@@ -125,6 +126,12 @@ def _run_pipeline_job(job_id: str, req_data: dict):
         }
 
     except Exception as exc:
+        # Surface the full traceback to docker logs — silent swallow has cost
+        # hours of debugging on 0-ticket responses that turned out to be
+        # JSONDecodeError mid-pipeline.
+        import traceback as _tb
+        print(f"[pipeline] ERROR in {job.get('stage','?')}: {type(exc).__name__}: {exc}")
+        _tb.print_exc()
         job["status"] = "error"
         job["result"] = {
             "status": "error", "provider": PROVIDER,
@@ -149,7 +156,7 @@ router = APIRouter()
 
 class TranscriptRequest(BaseModel):
     transcript: str
-    project_key: str = "ST"
+    project_key: str  # required — no default; caller must specify
     meeting_title: str = "Meeting"
     dry_run: bool = False
     # Optional credential overrides — when provided these take precedence
@@ -306,7 +313,7 @@ class SubmitTicketRequest(BaseModel):
     summary:     str
     description: str
     priority:    str = "Medium"
-    project_key: str = "ST"
+    project_key: str  # required — no default; caller must specify
     batch_id:    str | None = None   # shared batch timestamp for all tickets in one submission
     # Optional credential overrides (same semantics as TranscriptRequest).
     # The web UI no longer sends these; server falls back to env vars when None.
@@ -405,7 +412,7 @@ async def submit_ticket(req: SubmitTicketRequest, request: Request) -> TicketRes
 
 class EnrichDraftsRequest(BaseModel):
     tickets: list[dict]
-    project_key: str = "ST"
+    project_key: str  # required — no default; caller must specify
     base_url: str = "https://dcri.atlassian.net"
 
 
@@ -496,7 +503,7 @@ class DependencyPair(BaseModel):
 
 
 class BatchSubmitRequest(BaseModel):
-    project_key: str = "ST"
+    project_key: str  # required — no default; caller must specify
     base_url: str = "https://dcri.atlassian.net"
     batch_id: str | None = None
     tickets: list[BatchTicket]
