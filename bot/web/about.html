@@ -201,46 +201,47 @@
     </ul>
 
 
-    <h2>Writing a Transcript the AI Can Work With</h2>
+    <h2>Guiding the Conversation So Transcripts Extract Cleanly</h2>
     <p>
-      These aren&rsquo;t magic codewords &mdash; the LLM parses natural language. But
-      clear language produces clean tickets, and sloppy language produces sloppy tickets.
-      What follows are habits that noticeably improve extraction quality.
+      Upload whatever transcript you get &mdash; the bot never asks you to edit it
+      before upload. These are habits to use <em>during the meeting</em> that make
+      the raw captured transcript easier for the AI to turn into clean tickets.
     </p>
 
-    <h3>Make action items explicit</h3>
+    <h3>State action items out loud</h3>
     <ul>
-      <li>Say <em>&ldquo;Action item: X will do Y by Z&rdquo;</em> or equivalent.</li>
-      <li>Use verbs at the start of a sentence (&ldquo;Refactor the login flow&rdquo;, &ldquo;Add a CSV export&rdquo;) rather than passive description (&ldquo;we were thinking about maybe looking into refactoring&rdquo;).</li>
-      <li>Separate sentences with periods. Run-on transcription lumps multiple tasks into one ticket.</li>
+      <li>Say <em>&ldquo;Action item: X will do Y by Z&rdquo;</em> or equivalent when an item is decided. The word &ldquo;action item&rdquo; is a strong signal for Agent 1.</li>
+      <li>Use imperative verbs (&ldquo;Refactor the login flow&rdquo;, &ldquo;Add a CSV export&rdquo;) rather than vague framings (&ldquo;we were thinking about maybe looking into refactoring&rdquo;).</li>
     </ul>
 
-    <h3>Mention the assignee near the task</h3>
+    <h3>Say the assignee's name near the task</h3>
     <ul>
       <li><em>&ldquo;Joe will handle the migration script.&rdquo;</em> &rarr; Agent 1 records Joe&rsquo;s name near that task.</li>
-      <li><em>&ldquo;Joe. The migration script needs work. Someone should do it.&rdquo;</em> &rarr; The name isn&rsquo;t linked; assignee will be empty.</li>
+      <li><em>&ldquo;The migration script needs work. Someone should do it.&rdquo;</em> &rarr; No name linked; assignee will be empty.</li>
     </ul>
     <div class="note">
       <b>Important limitation today:</b>
       The name Agent 1 captures is a <em>suggestion</em>, not an automatic assignment. The
-      generated draft ticket will not have the assignee field filled &mdash; you set it in
+      generated draft ticket will not have the assignee field pre-filled &mdash; you set it in
       Step 3 via the Assignee dropdown per row, or via the bulk-apply bar. Automatic
       assignee-resolution from names is on the <a href="#planned">Planned Features</a> list.
     </div>
 
-    <h3>State deadlines and priority explicitly</h3>
+    <h3>Call out deadlines and priority in plain words</h3>
     <ul>
       <li><em>&ldquo;by next Friday&rdquo;</em>, <em>&ldquo;in the next sprint&rdquo;</em>, <em>&ldquo;before the Aug release&rdquo;</em> give Agent 1 something to base the start/due date on.</li>
-      <li><em>&ldquo;This is a blocker&rdquo;</em>, <em>&ldquo;production is down&rdquo;</em>, <em>&ldquo;critical for the demo&rdquo;</em> → priority gets bumped up.</li>
+      <li><em>&ldquo;This is a blocker&rdquo;</em>, <em>&ldquo;production is down&rdquo;</em>, <em>&ldquo;critical for the demo&rdquo;</em> &rarr; priority gets bumped up.</li>
       <li>Without those signals the default priority is <em>Medium</em> and dates are estimated from effort + dependencies.</li>
     </ul>
 
-    <h3>One topic per paragraph</h3>
+    <h3>Finish one topic before jumping to the next</h3>
     <p>
-      Meetings that wander (&ldquo;oh and while we&rsquo;re talking about that, also
-      the other thing, and also Jim mentioned&hellip;&rdquo;) produce overlapping tickets.
-      When possible, segment the transcript by topic &mdash; either naturally in the
-      meeting or with a short edit pass before uploading.
+      Conversations that ping-pong (&ldquo;oh and while we&rsquo;re talking about that,
+      also the other thing, and also Jim mentioned&hellip;&rdquo;) produce overlapping
+      tickets because the AI can&rsquo;t tell where one item ends and the next begins.
+      When you notice that pattern, pause and name the current topic explicitly
+      (&ldquo;okay, next topic &mdash; <em>deployment</em>&hellip;&rdquo;) before
+      moving on. It costs nothing in the meeting and saves manual ticket-splitting later.
     </p>
 
 
@@ -370,12 +371,6 @@
         edited one, for post-hoc accuracy analysis. Blocked on Jira admin creating the
         field (DCRI IT ticket DIS-3564, submitted 2026-04-22).
       </li>
-      <li>
-        <b>Live card-based flow in Teams.</b> A future mode where SageJiraBot posts
-        Adaptive Cards in the meeting chat as action items are detected, allowing
-        approvals in real time without leaving Teams. Blocked on Azure Bot Service
-        registration (IT pending).
-      </li>
     </ul>
 
 
@@ -411,10 +406,12 @@
           from the dropdown (don&rsquo;t type a free-form key).</td>
         </tr>
         <tr>
-          <td>I want to roll back an entire batch I just created</td>
-          <td>In Jira, run JQL <code>labels = "&lt;batch-timestamp&gt;"</code> and
-          bulk-delete. The batch timestamp is shown in the header of Step 3 after
-          submission.</td>
+          <td>I want to find every ticket this bot ever created, or roll one batch back</td>
+          <td>
+            Two JQLs to know:<br>
+            <code>labels = "sageJiraBot"</code> &mdash; every ticket the bot has ever created (across all batches and all users).<br>
+            <code>labels = "&lt;batch-timestamp&gt;"</code> &mdash; just the batch from one submission (the timestamp like <code>20260422-2158</code> is shown in the header of Step 3 after submission). Combine with <code>reporter = currentUser()</code> to narrow to your own.
+          </td>
         </tr>
       </tbody>
     </table>
