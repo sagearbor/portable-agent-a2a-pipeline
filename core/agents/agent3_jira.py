@@ -111,6 +111,17 @@ def run(
 
     tickets_to_create = json.loads(stripped)
 
+    # Deterministic carry-forward of suggested_assignee from approved_items
+    # (Agent 2 output) — the description-writing LLM only returns
+    # summary/description/priority, so the assignee name would otherwise be lost.
+    approved_by_id = {a.get("email_id"): a for a in approved_items if a.get("email_id")}
+    for ticket in tickets_to_create:
+        eid = ticket.get("email_id")
+        if eid and not ticket.get("suggested_assignee"):
+            src = approved_by_id.get(eid)
+            if src and src.get("suggested_assignee"):
+                ticket["suggested_assignee"] = src["suggested_assignee"]
+
     # Call the Jira tool for each ticket (or skip if dry_run)
     results = []
     for i, ticket in enumerate(tickets_to_create):
@@ -123,6 +134,7 @@ def run(
                 "summary":   ticket["summary"],
                 "priority":  ticket.get("priority", "Medium"),
                 "description": ticket.get("description", ""),
+                "suggested_assignee": ticket.get("suggested_assignee"),
             }
             result["email_id"] = ticket.get("email_id", "")
             results.append(result)
@@ -146,6 +158,7 @@ def run(
             )
             result["email_id"] = ticket.get("email_id", "")
             result["description"] = ticket.get("description", "")
+            result["suggested_assignee"] = ticket.get("suggested_assignee")
             results.append(result)
             print(f"[agent3] Created {result['ticket_id']}: {result['url']}")
 

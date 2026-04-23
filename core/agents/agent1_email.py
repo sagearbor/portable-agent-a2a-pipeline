@@ -53,6 +53,22 @@ TRANSCRIPT_INSTRUCTIONS = (
     "  is_actionable: true\n"
     "  suggested_priority: Critical | High | Medium | Low\n"
     "  suggested_jira_summary: a concise Jira ticket title\n"
+    "  suggested_assignee: first or full name of the person who will actually DO the work, or null if unclear.\n"
+    "                      IMPORTANT — the assignee is the DOER, not the speaker:\n"
+    "                        * 'Jane: Joe will take that'    -> assignee is 'Joe'  (NOT Jane)\n"
+    "                        * 'Jane: I'll take that'        -> assignee is 'Jane' (speaker volunteered)\n"
+    "                        * 'Jane: Assign Joe to X'       -> assignee is 'Joe'\n"
+    "                        * 'Jane: I can do it'           -> assignee is 'Jane'\n"
+    "                        * 'Jane: Joe, can you handle X' -> assignee is 'Joe'\n"
+    "                      Recognise ALL of these phrasings (case-insensitive) — always pull the doer's name:\n"
+    "                        * 'Assign <name> to ...'  /  'Assign this to <name>'\n"
+    "                        * 'Action item: <name> will/can/should ...'\n"
+    "                        * '<name> will take/own/handle/do/draft/create ...'\n"
+    "                        * '<name>, can you handle this?'  /  '<name>, please ...'\n"
+    "                        * '<name> is responsible for ...'\n"
+    "                        * 'I'll take that' / 'I can do it' / 'I've got it' -> use the speaker's own name\n"
+    "                      Return JUST the name (e.g. 'Ethan' or 'Sage Arbor') — not a sentence.\n"
+    "                      Do NOT invent names. If no name is stated, return null.\n"
     "\n"
     "Also include non-actionable items (informational updates, social chat) with "
     "is_actionable: false so the router agent can see what was filtered at this stage.\n"
@@ -127,6 +143,10 @@ def _extract_from_emails(emails: list[dict]) -> list[dict]:
             **token_limit_kwarg(model, MAX_TOKENS),
         )
         raw = response.choices[0].message.content
+        finish = response.choices[0].finish_reason
+        if finish == "length":
+            print(f"[agent1] WARNING: response truncated (finish_reason=length). "
+                  f"Raw length={len(raw or '')}. Increase MAX_TOKENS or split the transcript.")
 
     # Guard against empty / None LLM responses
     if not raw:

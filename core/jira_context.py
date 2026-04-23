@@ -303,8 +303,18 @@ def enrich_draft_tickets(
            "- suggested_sprint_name: sprint name or null\n" if sprints else "")
         + ("- suggested_fix_version_id: version ID string or null\n"
            "- suggested_fix_version_name: version name or null\n" if fix_versions else "")
-        + "- suggested_assignee: name of the person assigned in the meeting discussion "
-        "(e.g. if someone said 'I will take that' or 'Pandora, can you handle this?'), or null if unclear\n"
+        + "- suggested_assignee: first or full name of the person who will actually DO the work, or null if unclear.\n"
+        "    IMPORTANT — the assignee is the DOER, not the speaker:\n"
+        "      * 'Jane: Joe will take that' -> assignee 'Joe' (NOT Jane)\n"
+        "      * 'Jane: I'll take that'     -> assignee 'Jane' (speaker volunteered)\n"
+        "    Recognise ALL of these phrasings (case-insensitive), always pulling the doer's name:\n"
+        "    * 'Assign <name> to ...'  /  'Assign this to <name>'\n"
+        "    * 'Action item: <name> will/can/should ...'\n"
+        "    * '<name> will take/own/handle/do/draft/create ...'\n"
+        "    * '<name>, can you handle this?'  /  '<name>, please ...'\n"
+        "    * '<name> is responsible for ...'\n"
+        "    * 'I'll take that' / 'I can do it' / 'I've got it' -> use the speaker's own name\n"
+        "    Return just the name (e.g. 'Ethan' or 'Sage Arbor') — not a sentence. Do NOT invent names; if no name is stated, return null.\n"
         "- dependency_indices: array of ticket indices (0-based) that THIS ticket blocks (empty if none)\n"
         "\n"
         "Rules for dependencies:\n"
@@ -312,7 +322,9 @@ def enrich_draft_tickets(
         "- Parallel work should NOT be chained — give them the same start_date\n"
         "- Use realistic effort estimates — not all tickets take the same time\n"
         "\n"
-        "Keep all existing fields (summary, description, priority, email_id, ticket_id) unchanged.\n"
+        "Keep all existing fields (summary, description, priority, email_id, ticket_id, suggested_assignee) unchanged.\n"
+        "If suggested_assignee is already present and non-null on an input ticket, NEVER overwrite or drop it — "
+        "only populate it yourself when it is null/missing.\n"
         "Return the complete array as JSON. No explanation, just the JSON array."
     )
 
@@ -373,6 +385,17 @@ def enrich_draft_tickets(
         print(f"[jira_context] Raw response (last 200 chars): ...{stripped[-200:]}")
         return draft_tickets
 
+    # Deterministic carry-forward: re-assert suggested_assignee from input
+    # whenever the enrichment LLM forgot to echo it. Match by ticket_id first,
+    # then fall back to array position.
+    input_by_id = {t.get("ticket_id"): t for t in draft_tickets if t.get("ticket_id")}
+    for idx, t in enumerate(enriched):
+        if t.get("suggested_assignee"):
+            continue
+        src = input_by_id.get(t.get("ticket_id")) or (draft_tickets[idx] if idx < len(draft_tickets) else {})
+        if src and src.get("suggested_assignee"):
+            t["suggested_assignee"] = src["suggested_assignee"]
+
     print(f"[jira_context] Enriched {len(enriched)} tickets successfully")
     # Log a sample to verify fields are populated
     if enriched:
@@ -380,6 +403,16 @@ def enrich_draft_tickets(
         print(f"[jira_context] Sample ticket[0]: effort={sample.get('effort')}, "
               f"start_date={sample.get('start_date')}, due_date={sample.get('due_date')}, "
               f"deps={sample.get('dependency_indices')}")
+
+    # Assignee extraction visibility — helps debug when the LLM fails to
+    # pick up "Assign X" / "Action item: X" phrasings from the transcript.
+    assignee_counts = sum(1 for t in enriched if t.get("suggested_assignee"))
+    print(f"[jira_context] suggested_assignee populated on {assignee_counts}/{len(enriched)} tickets")
+    for i, t in enumerate(enriched):
+        sa = t.get("suggested_assignee")
+        if sa:
+            summary = (t.get("summary") or "")[:60]
+            print(f"[jira_context]   ticket[{i}] assignee={sa!r}  summary={summary!r}")
 
     return enriched
 
