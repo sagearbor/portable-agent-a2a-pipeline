@@ -14,7 +14,7 @@ as an actual tool/function call rather than a direct Python import.
 import json
 import os
 from core.clients.client import get_client, token_limit_kwarg
-from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
+from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, AGENT3_MODEL
 from core.tools.jira_tool import create_ticket, JiraCredentials
 
 AGENT_DEFINITION = {
@@ -69,7 +69,8 @@ def run(
         print("[agent3] Nothing to create.")
         return []
 
-    client, model = get_client()
+    client, default_model = get_client()
+    model = AGENT3_MODEL or default_model
     print(f"[agent3] Calling LLM ({model}) to write ticket descriptions...")
 
     input_text = f"Write Jira tickets for these approved items:\n{json.dumps(approved_items, indent=2)}"

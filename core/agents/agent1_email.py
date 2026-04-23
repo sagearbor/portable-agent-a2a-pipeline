@@ -11,7 +11,7 @@ A2A output: list of dicts, one per email, with extracted fields.
 
 import json
 from core.clients.client import get_client, token_limit_kwarg
-from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
+from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, AGENT1_MODEL
 from core.tools.outlook_tool import read_emails
 
 # ------------------------------------------------------------------
@@ -45,6 +45,28 @@ TRANSCRIPT_INSTRUCTIONS = (
     "follow-up, decision to implement, or investigation. Extract every one — do not consolidate "
     "multiple distinct items into a single entry.\n"
     "\n"
+    "OUTPUT SHAPE — return a single JSON object with two keys:\n"
+    "{\n"
+    "  \"items\":               [ ... action items, one per object as described below ... ],\n"
+    "  \"meeting_directives\": [ ... zero or more global instructions ... ]\n"
+    "}\n"
+    "(Returning a plain array of items is also accepted for backward compatibility, \n"
+    "in which case meeting_directives is treated as empty.)\n"
+    "\n"
+    "meeting_directives are blanket instructions the speakers made that apply across \n"
+    "multiple action items, e.g. 'assign everything unassigned to Joe' or 'mark the \n"
+    "migration task as a blocker'. Only include a directive when the speaker clearly \n"
+    "intended it as a sweeping rule — do not manufacture directives from a single \n"
+    "per-ticket assignment. Each directive is an object:\n"
+    "  {\"action\": \"assign_all\"|\"skip_item\"|\"set_priority\",\n"
+    "   \"value\":  \"Joe\" | \"Critical\" | \"High\" | \"Medium\" | \"Low\",\n"
+    "   \"match\":  null for all, or a short summary-fragment for targeting one item}\n"
+    "Phrasings to recognise as directives:\n"
+    "  * 'assign everything to Joe' / 'anything unassigned goes to Joe' -> assign_all, value=\"Joe\", match=null\n"
+    "  * 'make the <X> task a blocker' / '<X> is critical' -> set_priority, value=\"Critical\", match=\"<X>\"\n"
+    "  * 'skip the <Y> one' / 'we don't need to track <Y>' -> skip_item, match=\"<Y>\"\n"
+    "If no directives were said, return meeting_directives: [].\n"
+    "\n"
     "For each actionable item return a JSON object with these fields:\n"
     "  email_id:    a unique id like 'action_1', 'action_2', etc.\n"
     "  subject:     the topic area this item falls under\n"
@@ -73,7 +95,7 @@ TRANSCRIPT_INSTRUCTIONS = (
     "Also include non-actionable items (informational updates, social chat) with "
     "is_actionable: false so the router agent can see what was filtered at this stage.\n"
     "\n"
-    "Return a JSON array of ALL items found. Aim for completeness — it is better to "
+    "Aim for completeness — it is better to "
     "extract too many items than to miss real action items. No explanation, just the JSON."
 )
 
@@ -120,7 +142,8 @@ def _extract_from_emails(emails: list[dict]) -> list[dict]:
         email_text = _format_emails_text(emails)
         user_content = f"Here are the emails to process:\n{email_text}"
 
-    client, model = get_client()
+    client, default_model = get_client()
+    model = AGENT1_MODEL or default_model
     print(f"[agent1] Calling LLM ({model}) to extract structure...")
 
     if PROVIDER in ("openai_responses", "azure_responses"):
@@ -161,9 +184,95 @@ def _extract_from_emails(emails: list[dict]) -> list[dict]:
         stripped = stripped.rsplit("```", 1)[0].strip()
 
     print(f"[agent1] Raw LLM response (first 300 chars): {stripped[:300]}")
-    extracted = json.loads(stripped)
-    print(f"[agent1] Extracted {len(extracted)} email records")
+    parsed = json.loads(stripped)
+
+    # Accept either the new {items, meeting_directives} object form or the
+    # legacy plain array. We stash directives as a second element on the
+    # returned list via a private attribute — callers that don't know about
+    # directives will just see the items list (backward compatible).
+    if isinstance(parsed, dict):
+        extracted  = parsed.get("items", []) or []
+        directives = parsed.get("meeting_directives", []) or []
+    else:
+        extracted  = parsed
+        directives = []
+
+    # Attach directives to the list so run_on_items_with_directives can read
+    # them, without changing the public return shape.
+    try:
+        extracted.__meeting_directives__ = directives  # type: ignore[attr-defined]
+    except Exception:
+        # list doesn't support attribute assignment directly; wrap in subclass.
+        class _ListWithDirectives(list):
+            pass
+        wrapped = _ListWithDirectives(extracted)
+        wrapped.__meeting_directives__ = directives  # type: ignore[attr-defined]
+        extracted = wrapped
+
+    print(f"[agent1] Extracted {len(extracted)} email records; {len(directives)} meeting directive(s)")
+    for d in directives:
+        print(f"[agent1]   directive: {d}")
     return extracted
+
+
+def get_meeting_directives(extracted: list) -> list[dict]:
+    """Return meeting directives attached to an extraction result, or []."""
+    return list(getattr(extracted, "__meeting_directives__", []) or [])
+
+
+def apply_meeting_directives(items: list[dict], directives: list[dict]) -> list[dict]:
+    """
+    Apply global meeting directives to the extracted items in place.
+
+    Supported actions:
+      - assign_all:    value=<name>; only fills blank suggested_assignee so
+                       individually-assigned items keep their names.
+      - set_priority:  value=Critical|High|Medium|Low; applies to items whose
+                       summary contains ``match`` (case-insensitive), or to
+                       all items when match is null.
+      - skip_item:     drops items whose summary contains ``match``.
+
+    Returns the (possibly filtered) list — callers should use the return
+    value rather than the original because skip_item may shorten it.
+    """
+    if not directives or not items:
+        return items
+
+    out = list(items)
+    for d in directives:
+        action = (d.get("action") or "").lower()
+        value  = d.get("value")
+        match  = (d.get("match") or "").lower().strip() or None
+
+        if action == "assign_all" and value:
+            count = 0
+            for t in out:
+                if not t.get("suggested_assignee"):
+                    t["suggested_assignee"] = value
+                    count += 1
+            print(f"[directives] assign_all: set '{value}' on {count} item(s) with blank assignee")
+
+        elif action == "set_priority" and value:
+            hit = 0
+            for t in out:
+                summary = (t.get("summary") or t.get("suggested_jira_summary") or "").lower()
+                if match is None or match in summary:
+                    t["suggested_priority"] = value
+                    hit += 1
+            print(f"[directives] set_priority: '{value}' on {hit} item(s) (match={match!r})")
+
+        elif action == "skip_item" and match:
+            before = len(out)
+            out = [
+                t for t in out
+                if match not in (t.get("summary") or t.get("suggested_jira_summary") or "").lower()
+            ]
+            print(f"[directives] skip_item: dropped {before - len(out)} item(s) (match={match!r})")
+
+        else:
+            print(f"[directives] ignored unrecognised directive: {d}")
+
+    return out
 
 
 def run_on_items(items: list[dict]) -> list[dict]:

@@ -13,7 +13,7 @@ In Phase 2 this becomes a real Azure agent that receives a thread message.
 
 import json
 from core.clients.client import get_client, token_limit_kwarg
-from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
+from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, AGENT2_MODEL
 
 AGENT_DEFINITION = {
     "name": "router",
@@ -51,7 +51,8 @@ def run(email_extracts: list[dict]) -> dict:
     print(f"{'='*60}")
     print(f"[agent2] Received {len(email_extracts)} items from Agent 1")
 
-    client, model = get_client()
+    client, default_model = get_client()
+    model = AGENT2_MODEL or default_model
     print(f"[agent2] Calling LLM ({model}) to route...")
 
     input_text = f"Here are the extracts to evaluate:\n{json.dumps(email_extracts, indent=2)}"

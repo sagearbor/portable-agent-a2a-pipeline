@@ -76,6 +76,13 @@ def _run_pipeline_job(job_id: str, req_data: dict):
         job["stage"] = "agent1"
         email_extracts = agent1_email.run_on_items(items)
 
+        # Apply meeting-level directives ("assign all to Joe", "skip the X one",
+        # "make X a blocker") before routing so Agent 2 sees the post-directive
+        # state and its classification reflects the speaker's global intent.
+        directives = agent1_email.get_meeting_directives(email_extracts)
+        if directives:
+            email_extracts = agent1_email.apply_meeting_directives(email_extracts, directives)
+
         # Step 3: Agent 2
         job["stage"] = "agent2"
         router_result = agent2_router.run(email_extracts=email_extracts)

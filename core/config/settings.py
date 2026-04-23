@@ -43,6 +43,28 @@ MODELS = {
 }
 
 # ---------------------------------------------------------------------------
+# Per-agent model overrides (optional, env-driven)
+# ---------------------------------------------------------------------------
+# Each stage of the pipeline can be pointed at a different model. Cheaper /
+# faster models (e.g. gpt-5-nano) are fine for simple classification and
+# short-form writing but hurt quality for transcript comprehension and
+# dependency reasoning. Leave unset to use the provider default from MODELS.
+#
+# Recommended baseline:
+#   AGENT1_MODEL  = unset           # transcript comprehension — needs full capability
+#   AGENT2_MODEL  = gpt-5-nano      # approve/reject classification — simple
+#   AGENT3_MODEL  = gpt-5-nano      # description writing — mostly boilerplate
+#   ENRICH_MODEL  = unset           # epic matching + dependency ordering — needs reasoning
+#
+# We keep the model names as env vars (not settings constants) so the matrix
+# can be tuned per-deployment without a code change, and we can A/B test
+# cheaper models without touching the image.
+AGENT1_MODEL = (os.environ.get("AGENT1_MODEL") or "").strip() or None
+AGENT2_MODEL = (os.environ.get("AGENT2_MODEL") or "").strip() or None
+AGENT3_MODEL = (os.environ.get("AGENT3_MODEL") or "").strip() or None
+ENRICH_MODEL = (os.environ.get("ENRICH_MODEL") or "").strip() or None
+
+# ---------------------------------------------------------------------------
 # Azure authentication mode (only applies to azure / azure_responses providers)
 # ---------------------------------------------------------------------------
 # "az_login"         - uses your 'az login' session explicitly (AzureCliCredential).

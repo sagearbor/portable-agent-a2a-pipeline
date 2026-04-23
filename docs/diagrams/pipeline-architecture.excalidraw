@@ -31,7 +31,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "input-group-bg",
       "type": "rectangle",
@@ -54,7 +53,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "input-group-label",
@@ -84,7 +85,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "transcript-box",
       "type": "rectangle",
@@ -107,7 +107,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "transcript-label",
@@ -165,7 +167,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "demo-box",
       "type": "rectangle",
@@ -188,7 +189,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "demo-label",
@@ -246,7 +249,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "email-box",
       "type": "rectangle",
@@ -269,7 +271,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "email-label",
@@ -327,7 +331,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "adapter-box",
       "type": "rectangle",
@@ -350,7 +353,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "adapter-label",
@@ -380,7 +385,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "arrow-input-to-adapter1",
       "type": "arrow",
@@ -388,7 +392,16 @@
       "y": 200,
       "width": 130,
       "height": 40,
-      "points": [[0, 0], [130, 40]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          130,
+          40
+        ]
+      ],
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -414,7 +427,16 @@
       "y": 200,
       "width": 0,
       "height": 40,
-      "points": [[0, 0], [0, 40]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          40
+        ]
+      ],
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -433,7 +455,6 @@
       "startArrowhead": null,
       "endArrowhead": "arrow"
     },
-
     {
       "id": "arrow-adapter-to-pipeline",
       "type": "arrow",
@@ -441,7 +462,16 @@
       "y": 290,
       "width": 0,
       "height": 50,
-      "points": [[0, 0], [0, 50]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -460,7 +490,6 @@
       "startArrowhead": null,
       "endArrowhead": "arrow"
     },
-
     {
       "id": "pipeline-group-bg",
       "type": "rectangle",
@@ -483,7 +512,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "pipeline-group-label",
@@ -492,7 +523,7 @@
       "y": 350,
       "width": 300,
       "height": 25,
-      "text": "3-AGENT PIPELINE (Python dicts)",
+      "text": "4 LLM CALLS \u00b7 A2A-style handoff (Python dicts)",
       "fontSize": 20,
       "fontFamily": 1,
       "textAlign": "left",
@@ -513,7 +544,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "agent1-box",
       "type": "rectangle",
@@ -536,7 +566,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "agent1-label",
@@ -594,7 +626,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "arrow-a1-a2",
       "type": "arrow",
@@ -602,7 +633,16 @@
       "y": 435,
       "width": 80,
       "height": 0,
-      "points": [[0, 0], [80, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ]
+      ],
       "strokeColor": "#2f9e44",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -621,7 +661,6 @@
       "startArrowhead": null,
       "endArrowhead": "arrow"
     },
-
     {
       "id": "agent2-box",
       "type": "rectangle",
@@ -644,7 +683,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "agent2-label",
@@ -702,7 +743,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "arrow-a2-a3",
       "type": "arrow",
@@ -710,7 +750,16 @@
       "y": 435,
       "width": 80,
       "height": 0,
-      "points": [[0, 0], [80, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ]
+      ],
       "strokeColor": "#2f9e44",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -729,7 +778,6 @@
       "startArrowhead": null,
       "endArrowhead": "arrow"
     },
-
     {
       "id": "agent3-box",
       "type": "rectangle",
@@ -752,7 +800,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "agent3-label",
@@ -810,7 +860,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "arrow-pipeline-to-enrich",
       "type": "arrow",
@@ -818,7 +867,16 @@
       "y": 570,
       "width": 0,
       "height": 50,
-      "points": [[0, 0], [0, 50]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          50
+        ]
+      ],
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -837,7 +895,6 @@
       "startArrowhead": null,
       "endArrowhead": "arrow"
     },
-
     {
       "id": "enrich-group-bg",
       "type": "rectangle",
@@ -860,7 +917,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "enrich-group-label",
@@ -890,7 +949,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "jira-context-box",
       "type": "rectangle",
@@ -913,7 +971,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "jira-context-label",
@@ -943,7 +1003,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "arrow-context-to-enrich",
       "type": "arrow",
@@ -951,7 +1010,16 @@
       "y": 720,
       "width": 80,
       "height": 0,
-      "points": [[0, 0], [80, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          80,
+          0
+        ]
+      ],
       "strokeColor": "#1971c2",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -970,7 +1038,6 @@
       "startArrowhead": null,
       "endArrowhead": "arrow"
     },
-
     {
       "id": "llm-enrich-box",
       "type": "rectangle",
@@ -993,7 +1060,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "llm-enrich-label",
@@ -1002,7 +1071,7 @@
       "y": 678,
       "width": 170,
       "height": 85,
-      "text": "LLM Enrich\nAdd epics, effort,\ndates, dependencies,\nassignees",
+      "text": "Agent 4 (Enrich)\nAdd epics, effort,\ndates, dependencies,\nassignees",
       "fontSize": 14,
       "fontFamily": 1,
       "textAlign": "center",
@@ -1023,7 +1092,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "batch-submit-box",
       "type": "rectangle",
@@ -1046,7 +1114,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "batch-submit-label",
@@ -1076,7 +1146,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "arrow-enrich-to-batch",
       "type": "arrow",
@@ -1084,7 +1153,16 @@
       "y": 770,
       "width": 0,
       "height": 20,
-      "points": [[0, 0], [0, 20]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          20
+        ]
+      ],
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -1103,7 +1181,6 @@
       "startArrowhead": null,
       "endArrowhead": "arrow"
     },
-
     {
       "id": "arrow-batch-to-jira",
       "type": "arrow",
@@ -1111,7 +1188,16 @@
       "y": 855,
       "width": 0,
       "height": 45,
-      "points": [[0, 0], [0, 45]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          0,
+          45
+        ]
+      ],
       "strokeColor": "#1e1e1e",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -1130,7 +1216,6 @@
       "startArrowhead": null,
       "endArrowhead": "arrow"
     },
-
     {
       "id": "jira-group-bg",
       "type": "rectangle",
@@ -1153,7 +1238,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "jira-group-label",
@@ -1211,7 +1298,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "llm-provider-bg",
       "type": "rectangle",
@@ -1234,7 +1320,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "llm-provider-title",
@@ -1286,7 +1374,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "llm-azure-label",
@@ -1344,7 +1434,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "arrow-pipeline-to-llm",
       "type": "arrow",
@@ -1352,7 +1441,16 @@
       "y": 435,
       "width": 70,
       "height": 0,
-      "points": [[0, 0], [70, 0]],
+      "points": [
+        [
+          0,
+          0
+        ],
+        [
+          70,
+          0
+        ]
+      ],
       "strokeColor": "#1971c2",
       "backgroundColor": "transparent",
       "fillStyle": "solid",
@@ -1371,7 +1469,6 @@
       "startArrowhead": "arrow",
       "endArrowhead": "arrow"
     },
-
     {
       "id": "webui-bg",
       "type": "rectangle",
@@ -1394,7 +1491,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "webui-title",
@@ -1446,7 +1545,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "webui-fastapi-label",
@@ -1498,7 +1599,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "webui-html-label",
@@ -1550,7 +1653,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "webui-docker-label",
@@ -1580,7 +1685,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "auth-box",
       "type": "rectangle",
@@ -1603,7 +1707,9 @@
       "updated": 1,
       "link": null,
       "locked": false,
-      "roundness": { "type": 3 }
+      "roundness": {
+        "type": 3
+      }
     },
     {
       "id": "auth-title",
@@ -1661,7 +1767,6 @@
       "link": null,
       "locked": false
     },
-
     {
       "id": "file-paths-label",
       "type": "text",

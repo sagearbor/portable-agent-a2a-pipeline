@@ -14,7 +14,7 @@ from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
 from core.clients.client import get_client, token_limit_kwarg
-from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
+from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, ENRICH_MODEL
 
 load_dotenv()
 
@@ -259,7 +259,8 @@ def enrich_draft_tickets(
     if not draft_tickets:
         return draft_tickets
 
-    client, model = get_client()
+    client, default_model = get_client()
+    model = ENRICH_MODEL or default_model
 
     epic_context = ""
     if epics:
