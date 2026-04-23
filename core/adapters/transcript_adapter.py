@@ -155,10 +155,28 @@ def clean_transcript(text: str) -> str:
         return "\n".join(lines)
 
 
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 chars per token for English text."""
+    return len(text) // 4
+
+
+def _get_max_input_tokens() -> int:
+    """
+    Return the max input tokens for the current model, based on settings.
+
+    Uses MODEL_CONTEXT_WINDOWS and MAX_INPUT_FRACTION from settings.
+    Falls back to a conservative 100k if the model isn't listed.
+    """
+    from core.config.settings import MODELS, PROVIDER, MODEL_CONTEXT_WINDOWS, MAX_INPUT_FRACTION
+    model = MODELS.get(PROVIDER, "gpt-4o")
+    context_window = MODEL_CONTEXT_WINDOWS.get(model, 100_000)
+    return int(context_window * MAX_INPUT_FRACTION)
+
+
 def transcript_to_pipeline_input(
     transcript: str,
     meeting_title: str = "Meeting",
-    max_chunk_chars: int = 3000,
+    max_chunk_chars: int = 6000,
 ) -> list[dict]:
     """
     Convert a meeting transcript into a list of email-shaped dicts
@@ -166,18 +184,19 @@ def transcript_to_pipeline_input(
 
     Strategy:
       1. Clean/parse the transcript to normalized speaker: dialogue text
-      2. Split into chunks of 3-5 speaker turns (capped at max_chunk_chars)
-         to avoid sending the entire transcript to the LLM in one shot
-      3. Each chunk becomes one "email" dict with:
+      2. Check if the whole transcript fits within the model's context window
+         - If yes: return a single item (no chunking) for best LLM comprehension
+         - If no:  split into chunks capped at max_chunk_chars
+      3. Each item becomes one "email" dict with:
            id:      "transcript_seg_N"
-           sender:  primary speaker of the chunk (or "Meeting Participant")
+           sender:  primary speaker (or "Meeting Participants")
            subject: "[meeting_title] Transcript Segment N"
-           body:    the chunk text
+           body:    the text
 
     Args:
         transcript:      Raw transcript text (any supported format)
         meeting_title:   Human-readable meeting name (used in email subject)
-        max_chunk_chars: Maximum characters per chunk before hard-splitting
+        max_chunk_chars: Maximum characters per chunk when chunking is needed
 
     Returns:
         List of email-shaped dicts for the pipeline.
@@ -189,19 +208,36 @@ def transcript_to_pipeline_input(
 
     # Step 2: split into speaker-turn lines
     lines = [line for line in clean.splitlines() if line.strip()]
-
     if not lines:
         return []
 
-    # Step 3: group lines into chunks of ~5 turns, respecting max_chunk_chars
+    full_text = "\n".join(lines)
+    estimated_tokens = _estimate_tokens(full_text)
+    max_input_tokens = _get_max_input_tokens()
+
+    # Step 3: decide whether to chunk
+    if estimated_tokens <= max_input_tokens:
+        # Whole transcript fits — send as one item for best comprehension
+        print(f"[adapter] Transcript fits in context ({estimated_tokens:,} est. tokens "
+              f"<= {max_input_tokens:,} max). Sending as single segment.")
+        return [{
+            "id":      "transcript_full",
+            "sender":  "Meeting Participants",
+            "subject": f"[{meeting_title}] Full Transcript",
+            "body":    full_text,
+        }]
+
+    # Transcript too large — chunk it
+    print(f"[adapter] Transcript exceeds context ({estimated_tokens:,} est. tokens "
+          f"> {max_input_tokens:,} max). Chunking into segments.")
+
     chunks: list[list[str]] = []
     current_chunk: list[str] = []
     current_chars = 0
-    TURNS_PER_CHUNK = 5
+    TURNS_PER_CHUNK = 30
 
     for line in lines:
         line_chars = len(line)
-        # Start a new chunk if we hit the turn limit OR character limit
         if current_chunk and (
             len(current_chunk) >= TURNS_PER_CHUNK or
             current_chars + line_chars > max_chunk_chars
@@ -215,15 +251,11 @@ def transcript_to_pipeline_input(
     if current_chunk:
         chunks.append(current_chunk)
 
-    # Edge case: if a single line exceeds max_chunk_chars, it becomes its own chunk
-    # (already handled by the logic above — it appended and reset)
-
     # Step 4: build email-shaped dicts
     items = []
     for i, chunk_lines in enumerate(chunks):
         chunk_text = "\n".join(chunk_lines)
 
-        # Try to identify the primary speaker of this chunk
         speaker_counts: dict[str, int] = {}
         for line in chunk_lines:
             match = re.match(r'^([^:]+):', line)

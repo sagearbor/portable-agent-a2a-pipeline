@@ -45,16 +45,28 @@ class JiraCredentials:
     """
     Explicit Jira credentials for a single API call.
 
-    Used by the Teams bot to pass service-account or (future) per-user OAuth
-    credentials without relying on environment variables.
+    Two auth modes are supported:
 
-    When passed to create_ticket(credentials=...) these values override the
+    1. **Basic auth** (service account / API token) — set ``email`` +
+       ``api_token``.  ``base_url`` points at the site (e.g.
+       ``https://dcri.atlassian.net``).  Tickets are attributed to the
+       owner of the API token.
+
+    2. **OAuth 3LO bearer token** (per-user sign-in) — set
+       ``access_token`` + ``cloud_id``.  ``base_url`` is ignored; calls
+       go to ``https://api.atlassian.com/ex/jira/{cloud_id}``.  Tickets
+       are attributed to the signed-in user.
+
+    ``project_key`` is required in both modes.  Pass to
+    ``create_ticket(credentials=...)`` to override the
     JIRA_BASE_URL / JIRA_EMAIL / JIRA_API_TOKEN / JIRA_PROJECT_KEY env vars.
     """
-    base_url:    str
-    email:       str
-    api_token:   str
-    project_key: str
+    base_url:      str
+    email:         str
+    api_token:     str
+    project_key:   str
+    access_token:  str | None = None   # set for OAuth mode
+    cloud_id:      str | None = None   # set for OAuth mode
 
 
 # ---------------------------------------------------------------------------
@@ -63,13 +75,29 @@ class JiraCredentials:
 
 def _client(
     credentials: JiraCredentials | None = None,
-) -> tuple[str, HTTPBasicAuth, dict]:
+) -> tuple[str, HTTPBasicAuth | None, dict]:
     """
     Returns (base_url, auth, headers) for Jira API calls.
 
-    If credentials is provided, use those values.
-    Otherwise fall back to environment variables.
+    Auth mode:
+      * OAuth bearer token  — when credentials has access_token + cloud_id.
+        Returns (api.atlassian.com/ex/jira/<cid>, None, headers-with-bearer).
+      * Basic auth          — when credentials has email + api_token, or
+        when falling back to JIRA_EMAIL / JIRA_API_TOKEN env vars.
+        Returns (site-base-url, HTTPBasicAuth, plain-headers).
+
+    Callers pass the returned ``auth`` straight through to ``requests.*``.
+    ``requests`` treats ``auth=None`` as a no-op, so the caller path is
+    identical for both modes.
     """
+    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+
+    if credentials is not None and credentials.access_token and credentials.cloud_id:
+        # OAuth mode — bearer token, routed through api.atlassian.com
+        base_url = f"https://api.atlassian.com/ex/jira/{credentials.cloud_id}"
+        headers = {**headers, "Authorization": f"Bearer {credentials.access_token}"}
+        return base_url, None, headers
+
     if credentials is not None:
         base_url = credentials.base_url.rstrip("/")
         auth = HTTPBasicAuth(credentials.email, credentials.api_token)
@@ -79,7 +107,6 @@ def _client(
         token    = os.environ["JIRA_API_TOKEN"]
         auth     = HTTPBasicAuth(email, token)
 
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
     return base_url, auth, headers
 
 

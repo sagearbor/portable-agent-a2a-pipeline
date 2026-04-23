@@ -25,9 +25,13 @@ appended by this code; the caller cannot influence them.
 import logging
 import requests
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
-from bot.api.routes._jira_helpers import validate_base_url, get_jira_auth
+from bot.api.routes._jira_helpers import (
+    validate_base_url,
+    get_jira_auth,
+    get_jira_request_config,
+)
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -289,6 +293,7 @@ def _fetch_project_members(
 
 @router.get("/jira/context")
 async def get_jira_context(
+    request:     Request,
     base_url:    str = Query(..., description="Jira base URL, e.g. https://org.atlassian.net"),
     project_key: str = Query(..., description="Jira project key, e.g. ST"),
 ):
@@ -299,29 +304,38 @@ async def get_jira_context(
 
     Each section is fetched independently; if one fails (e.g. Kanban
     boards have no sprints) the others still return data.
+
+    Auth preference: OAuth session token when signed in, else service-account.
     """
     # SSRF guard
-    base = validate_base_url(base_url)
+    base_validated = validate_base_url(base_url)
 
-    auth = get_jira_auth()
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    cfg = get_jira_request_config(request, base_validated)
+
+    # Derive (auth, headers) from cfg to keep existing helper signatures.
+    # Under OAuth: auth=None, headers contain the Bearer token.
+    # Under Basic: auth=HTTPBasicAuth, headers contain just Accept.
+    auth = cfg.kwargs.get("auth")
+    headers = dict(cfg.kwargs.get("headers", {}))
+    headers.setdefault("Accept", "application/json")
+    headers.setdefault("Content-Type", "application/json")
 
     try:
-        epics        = _fetch_epics(base, project_key, auth, headers)
-        sprints      = _fetch_sprints(base, project_key, auth, headers)
-        fix_versions = _fetch_fix_versions(base, project_key, auth, headers)
-        users        = _fetch_project_members(base, project_key, auth, headers)
+        epics        = _fetch_epics(cfg.base, project_key, auth, headers)
+        sprints      = _fetch_sprints(cfg.base, project_key, auth, headers)
+        fix_versions = _fetch_fix_versions(cfg.base, project_key, auth, headers)
+        users        = _fetch_project_members(cfg.base, project_key, auth, headers)
     except HTTPException:
         raise
     except requests.exceptions.ConnectionError as exc:
         raise HTTPException(
             status_code=502,
-            detail=f"Could not reach Jira at {base}: {exc}",
+            detail=f"Could not reach Jira: {exc}",
         )
     except requests.exceptions.Timeout:
         raise HTTPException(
             status_code=504,
-            detail=f"Timed out connecting to Jira at {base}",
+            detail=f"Timed out connecting to Jira",
         )
 
     return {

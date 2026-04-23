@@ -779,6 +779,10 @@
     ----------------------------------------------------------------------- */
     .ticket-table .col-epic    { min-width: 150px; }
     .ticket-table .col-effort  { width: 70px; }
+    .ticket-table .col-pri     { width: 110px; }
+    .ticket-table .col-start   { width: 130px; }
+    .ticket-table .col-due     { width: 130px; }
+    .ticket-table .col-deps    { width: 90px; }
     .ticket-table .col-sprint  { min-width: 120px; }
     .ticket-table .col-fixver  { min-width: 120px; }
     .ticket-table .col-labels  { min-width: 160px; }
@@ -790,6 +794,61 @@
     .label-pill.auto { background: #e8f0fe; color: #1a4f9c; }
     .label-pill.user { background: #f0f2f8; color: #4a5066; }
     .ticket-table-wrap { overflow-x: auto; }
+
+    /* Rejected items collapsible */
+    .rejected-panel { margin-bottom: 12px; }
+    .rejected-toggle {
+      cursor: pointer; font-size: 13px; color: var(--text-muted);
+      user-select: none; display: inline-flex; align-items: center; gap: 6px;
+    }
+    .rejected-toggle:hover { color: #2d3142; }
+    .rejected-toggle .arrow { transition: transform 0.2s; display: inline-block; }
+    .rejected-toggle.open .arrow { transform: rotate(90deg); }
+    .rejected-list {
+      display: none; margin: 6px 0 0 18px; font-size: 12px; color: #666;
+      list-style: none; padding: 0;
+    }
+    .rejected-list.open { display: block; }
+    .rejected-list li { padding: 3px 0; border-bottom: 1px solid #eee; }
+    .rejected-list li:last-child { border-bottom: none; }
+    .rejected-reason { color: #999; font-style: italic; }
+
+    /* Anchor date scheduling bar */
+    .anchor-bar {
+      display: flex; flex-wrap: wrap; gap: 12px; align-items: end;
+      padding: 10px 12px; margin-bottom: 8px;
+      background: #fef9e7; border: 1px solid #f0d878; border-radius: var(--radius);
+      font-size: 12px;
+    }
+    .anchor-bar label { font-weight: 600; color: #7a6c1e; display: block; margin-bottom: 2px; }
+    .anchor-bar input[type="date"] { font-size: 12px; padding: 4px 6px; }
+    .anchor-bar .anchor-btn {
+      padding: 5px 12px; font-size: 12px; font-weight: 600;
+      background: #d4a72c; color: #fff; border: none; border-radius: 4px; cursor: pointer;
+    }
+    .anchor-bar .anchor-btn:hover { background: #b8911f; }
+    .anchor-bar .anchor-info { font-size: 11px; color: #8a7b2e; align-self: center; max-width: 320px; }
+    .dep-badge {
+      display: inline-block; font-size: 10px; padding: 1px 5px; border-radius: 3px;
+      background: #fff3cd; color: #856404; margin: 1px;
+    }
+
+    /* Bulk-apply bar above table */
+    .bulk-apply-bar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: end;
+      padding: 10px 12px; margin-bottom: 8px;
+      background: #edf2fb; border: 1px solid #d0daf0; border-radius: var(--radius);
+      font-size: 12px;
+    }
+    .bulk-apply-bar label { font-weight: 600; color: #4a5066; display: block; margin-bottom: 2px; }
+    .bulk-apply-bar select, .bulk-apply-bar input { font-size: 12px; padding: 4px 6px; }
+    .bulk-apply-bar .bulk-field { display: flex; flex-direction: column; }
+    .bulk-apply-bar .bulk-btn {
+      padding: 5px 12px; font-size: 12px; font-weight: 600;
+      background: var(--accent); color: #fff; border: none; border-radius: 4px; cursor: pointer;
+      align-self: end;
+    }
+    .bulk-apply-bar .bulk-btn:hover { background: var(--accent-hover); }
   </style>
 </head>
 <body>
@@ -815,6 +874,11 @@
     <a href="#section-tickets" id="nav-tickets">
       <span class="step-num">3</span>
       Review &amp; Submit
+    </a>
+    <a href="about.html" target="_blank" rel="noopener" id="nav-about"
+       style="margin-top:24px; border-top:1px solid rgba(255,255,255,0.08); padding-top:16px;">
+      <span class="step-num" style="font-size:13px;">?</span>
+      About &amp; How to Use
     </a>
   </nav>
 
@@ -904,12 +968,49 @@
       </div>
     </div>
 
-    <!-- SSO: disabled placeholder — shown when AZURE_AD_CLIENT_ID is not configured -->
-    <div id="sso-disabled" class="sso-box">
-      <div class="sso-title">&#128272; Single Sign-On (Requires Setup)</div>
-      Duke NetID sign-in is available once an Azure AD app is registered.
-      See <code>docs/design-jira-auth.md</code> for IT instructions.
-      Until then, the server service account is used for all Jira operations.
+    <!--
+      Azure AD SSO "Requires Setup" placeholder was removed on 2026-04-22.
+      Jira OAuth now provides identity attribution (signed-in user's email
+      is used as ticket reporter).  The active SSO code path remains intact
+      above via #sso-section; set AZURE_AD_CLIENT_ID in .env to re-enable
+      Duke NetID SSO alongside Jira OAuth if ever required.
+    -->
+
+    <!-- Atlassian OAuth sign-in — per-user Jira write identity -->
+    <div id="jira-oauth-section" class="sso-section" style="margin-top:12px;">
+      <div class="sso-divider">Jira Sign-In (per-user)</div>
+
+      <div id="jira-oauth-configured" style="display:none;">
+        <div id="jira-oauth-signed-out">
+          <p class="sso-desc">Sign in with your Atlassian account so tickets are created as <em>you</em>, and the project list is filtered to projects you can write to.</p>
+          <button class="btn btn-sso" id="btn-jira-signin">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+              <path d="M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.005-1.005z" fill="#2684FF"/>
+              <path d="M17.356 5.73H5.785A5.215 5.215 0 0 0 11 10.945h2.129v2.058a5.218 5.218 0 0 0 5.215 5.215V6.736a1.005 1.005 0 0 0-1.005-1.005z" fill="#0052CC"/>
+              <path d="M23.142 0H11.57a5.215 5.215 0 0 0 5.215 5.215h2.129v2.057A5.218 5.218 0 0 0 24.126 12.485V1.005A1.005 1.005 0 0 0 23.142 0z" fill="#2684FF"/>
+            </svg>
+            Sign in to Jira
+          </button>
+        </div>
+
+        <div id="jira-oauth-signed-in" style="display:none;">
+          <div class="sso-user-badge">
+            <div class="sso-avatar" style="background:#0052CC;">J</div>
+            <div>
+              <div class="sso-name"  id="jira-oauth-name">&#8212;</div>
+              <div class="sso-email" id="jira-oauth-email">&#8212;</div>
+            </div>
+            <button class="btn btn-link" id="btn-jira-signout">Sign out of Jira</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="jira-oauth-unconfigured" class="sso-box" style="display:none;">
+        <div class="sso-title">&#128274; Jira Per-User Sign-In (Requires Setup)</div>
+        Set <code>ATLASSIAN_OAUTH_CLIENT_ID</code> and <code>ATLASSIAN_OAUTH_CLIENT_SECRET</code>
+        in the server <code>.env</code> to enable per-user sign-in.
+        Until then, all tickets are created with the server service account.
+      </div>
     </div>
   </div>
 
@@ -918,16 +1019,16 @@
   ----------------------------------------------------------------------- -->
   <div class="card" id="section-transcript">
     <h2>Step 2 — Provide Transcript</h2>
-    <p class="subtitle">Drop a .txt / .vtt / .srt file or paste text. Supports Teams VTT transcripts, Webex .txt exports, and plain conversation text.</p>
+    <p class="subtitle">Drop a .txt / .md / .vtt / .srt / .docx / .pdf file or paste text. Supports Teams VTT transcripts, Webex .txt exports, Word meeting notes, and PDF exports.</p>
 
     <!-- Drag-drop zone -->
     <div id="drop-zone">
-      <input type="file" id="file-input" accept=".txt,.vtt,.srt" />
+      <input type="file" id="file-input" accept=".txt,.md,.vtt,.srt,.docx,.pdf" />
       <div class="drop-icon">&#8659;</div>
       <p>Drag &amp; drop a transcript file here</p>
-      <p style="font-size:11px; margin-top:4px; color:#aaa;">.txt &nbsp;.vtt &nbsp;.srt</p>
+      <p style="font-size:11px; margin-top:4px; color:#aaa;">.txt &nbsp;.md &nbsp;.vtt &nbsp;.srt &nbsp;.docx &nbsp;.pdf</p>
       <p style="font-size:11px; margin-top:8px; color:#999;">
-        <span class="info-icon" data-tip="How to get a transcript:&#10;• Teams: Meeting recap → Download transcript&#10;• Zoom: Recording → Transcript tab → Download&#10;• Webex: Recordings → Download transcript&#10;• Or paste any meeting notes directly below">ⓘ</span>
+        <span class="info-icon" data-tip="How to get a transcript:&#10;• Teams: Meeting recap → Download transcript&#10;• Zoom: Recording → Transcript tab → Download&#10;• Webex: Recordings → Download transcript&#10;• Word/Notes: save as .docx or .pdf&#10;• Or paste any meeting notes directly below">ⓘ</span>
         How do I get a transcript?
       </p>
       <p class="file-name" id="file-name-label" style="display:none;"></p>
@@ -958,11 +1059,21 @@
             Jira Project Key
             <span class="info-icon" data-tip="Type the project key (e.g. ST) or paste a Jira URL.&#10;The key is the short code before the ticket number (e.g. ST in ST-42).">ⓘ</span>
           </span>
+          <a id="jira-project-link" href="#" target="_blank" rel="noopener noreferrer"
+             aria-disabled="true"
+             style="margin-left:8px; font-size:11px; color:#9aa0b0; pointer-events:none; text-decoration:none;">
+            Link to Jira ↗
+          </a>
         </label>
         <input type="text" id="project-key-input" placeholder="e.g. ST" value="ST" style="text-transform:uppercase; margin-bottom:4px;" />
         <select id="project-select" disabled style="font-size:11px;">
           <option value="">— connect to browse all —</option>
         </select>
+        <label style="font-size:11px; color:var(--text-muted); margin-top:4px; display:flex; align-items:center; gap:4px; cursor:pointer;">
+          <input type="checkbox" id="toggle-show-all-projects" style="margin:0;" />
+          Show all projects I can write to
+          <span class="info-icon" data-tip="Default: projects you have recently viewed or worked in.&#10;Checked: every project at dcri.atlassian.net where you can create issues (~500).&#10;Turn on if the project you want isn't in the short list.">ⓘ</span>
+        </label>
       </div>
       <button class="btn btn-primary" id="btn-analyze" disabled
         title="Sends transcript to the AI pipeline. Tickets are shown as drafts first — nothing is created in Jira until you click 'Create Selected Tickets'.">
@@ -981,6 +1092,73 @@
     <h2>Step 3 — Review Draft Tickets</h2>
     <p class="subtitle">Edit fields, uncheck rows to skip, then click "Create Selected Tickets".</p>
 
+    <!-- Rejected items panel (populated by JS after pipeline run) -->
+    <div class="rejected-panel" id="rejected-panel" style="display:none;">
+      <span class="rejected-toggle" id="rejected-toggle">
+        <span class="arrow">&#9654;</span>
+        <span id="rejected-label">0 items filtered out by Agent 2</span>
+      </span>
+      <ul class="rejected-list" id="rejected-list"></ul>
+    </div>
+
+    <!-- Anchor date scheduling: set a project start date and auto-calculate all dates -->
+    <div class="anchor-bar" id="anchor-bar">
+      <div class="bulk-field">
+        <label>Anchor Date (project start)</label>
+        <input type="date" id="anchor-date" />
+      </div>
+      <button class="anchor-btn" id="anchor-recalc-btn">Recalculate Dates</button>
+      <span class="anchor-info">
+        Sets the first ticket's start date. All other dates auto-calculate from effort estimates and dependencies.
+        Change the anchor to shift the entire schedule.
+      </span>
+    </div>
+
+    <!-- Bulk-apply bar: set a value for all checked rows at once -->
+    <div class="bulk-apply-bar" id="bulk-apply-bar">
+      <span style="font-weight:600; color:#4a5066; align-self:center;">Apply to all checked rows:</span>
+      <div class="bulk-field">
+        <label>Epic</label>
+        <select id="bulk-epic"><option value="">—</option></select>
+        <input type="text" id="bulk-epic-new-name" placeholder="New epic name..." style="display:none; margin-top:3px; width:140px;" />
+      </div>
+      <div class="bulk-field">
+        <label>Sprint</label>
+        <select id="bulk-sprint"><option value="">—</option></select>
+      </div>
+      <div class="bulk-field">
+        <label>Fix Version</label>
+        <select id="bulk-fixver"><option value="">—</option></select>
+      </div>
+      <div class="bulk-field">
+        <label>Assignee</label>
+        <select id="bulk-assignee"><option value="">—</option></select>
+      </div>
+      <div class="bulk-field">
+        <label title="Labels (comma-separated) — applied in addition to any existing labels on each row. Every ticket also gets 'sageJiraBot' and a batch timestamp automatically.">Labels</label>
+        <input type="text" id="bulk-labels" placeholder="comma,separated,labels" title="Labels (comma-separated) — applied in addition to any existing labels on each row." style="width:160px;" />
+      </div>
+      <div class="bulk-field">
+        <label>Priority</label>
+        <select id="bulk-priority">
+          <option value="">—</option>
+          <option value="Critical">Critical</option>
+          <option value="High">High</option>
+          <option value="Medium">Medium</option>
+          <option value="Low">Low</option>
+        </select>
+      </div>
+      <div class="bulk-field">
+        <label>Start Date</label>
+        <input type="date" id="bulk-start-date" />
+      </div>
+      <div class="bulk-field">
+        <label>Due Date</label>
+        <input type="date" id="bulk-due-date" />
+      </div>
+      <button class="bulk-btn" id="bulk-apply-btn">Apply</button>
+    </div>
+
     <div class="ticket-table-wrap">
     <table class="ticket-table" id="ticket-table">
       <thead>
@@ -990,6 +1168,9 @@
           <th class="col-epic">Epic</th>
           <th class="col-effort">Effort</th>
           <th class="col-pri">Priority</th>
+          <th class="col-start">Start</th>
+          <th class="col-due">Due</th>
+          <th class="col-deps">Blocks</th>
           <th class="col-sprint">Sprint</th>
           <th class="col-fixver">Fix Version</th>
           <th class="col-labels">Labels</th>
@@ -1100,6 +1281,20 @@ const BASE = (() => {
 })();
 
 /* =========================================================================
+   Version badge — fetched from container so it shows even when NGINX
+   serves a cached copy of this HTML file.
+========================================================================= */
+fetch(`${BASE}/health`).then(r => r.json()).then(d => {
+  if (d.version) {
+    const h1 = document.querySelector('.logo h1');
+    if (h1 && !h1.querySelector('sub')) {
+      h1.insertAdjacentHTML('beforeend',
+        ` <sub style="font-size:0.4em;opacity:0.6">v${d.version}</sub>`);
+    }
+  }
+}).catch(() => {});
+
+/* =========================================================================
    State
 ========================================================================= */
 const state = {
@@ -1169,6 +1364,68 @@ function updateNavSteps() {
 }
 
 /* =========================================================================
+   Assignee resolution — map the LLM-extracted name ("Pandora") to an
+   actual Jira accountId from the project user list.  Populates
+   ``suggested_assignee_id`` on each draft so the per-row Assignee
+   dropdown auto-selects the right person.  Leaves unresolved when
+   ambiguous (e.g. two Joes) so the user explicitly picks.
+========================================================================= */
+
+function _normalizeName(s) {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function resolveAssigneeIdFromName(name, users) {
+  const target = _normalizeName(name);
+  if (!target || !Array.isArray(users) || users.length === 0) return null;
+
+  // 1) exact displayName match (case-insensitive)
+  const exact = users.filter(u => _normalizeName(u.displayName) === target);
+  if (exact.length === 1) return exact[0].accountId;
+  if (exact.length > 1)   return null;  // ambiguous -> leave for manual pick
+
+  // 2) email local-part match ("jsmith" vs "jsmith@duke.edu")
+  const byEmailLocal = users.filter(u => {
+    const local = ((u.email || '').split('@')[0] || '').toLowerCase();
+    return local && local === target;
+  });
+  if (byEmailLocal.length === 1) return byEmailLocal[0].accountId;
+
+  // 3) unique first-name or last-name match ("Joe" -> "Joe Martinez" only if no other Joe)
+  const asToken = target.split(' ')[0];  // if full name was given, try first name only
+  const byFirstName = users.filter(u => {
+    const parts = _normalizeName(u.displayName).split(' ');
+    return parts[0] === asToken;
+  });
+  if (byFirstName.length === 1) return byFirstName[0].accountId;
+
+  const byLastName = users.filter(u => {
+    const parts = _normalizeName(u.displayName).split(' ');
+    return parts[parts.length - 1] === asToken;
+  });
+  if (byLastName.length === 1) return byLastName[0].accountId;
+
+  // Ambiguous or no match
+  return null;
+}
+
+function resolveAssigneesFromNames() {
+  const users = state.jiraContext && state.jiraContext.users;
+  if (!Array.isArray(users) || users.length === 0) return;
+  let resolved = 0;
+  state.draftTickets.forEach(t => {
+    if (t.suggested_assignee && !t.suggested_assignee_id) {
+      const acct = resolveAssigneeIdFromName(t.suggested_assignee, users);
+      if (acct) {
+        t.suggested_assignee_id = acct;
+        resolved += 1;
+      }
+    }
+  });
+  dbg(5, `[Assignees] Resolved ${resolved}/${state.draftTickets.length} drafts from suggested names`);
+}
+
+/* =========================================================================
    Section 1 — Connect
 ========================================================================= */
 
@@ -1219,8 +1476,13 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
   }
 
   try {
-    // No email/token sent — server uses its service account credentials
-    const params = new URLSearchParams({ base_url: baseUrl });
+    // Honor the "show all" toggle: checked → recent_only=false (full
+    // writable list); unchecked → recent_only=true (recently viewed, ~10-20).
+    const showAll = document.getElementById('toggle-show-all-projects')?.checked;
+    const params = new URLSearchParams({
+      base_url:    baseUrl,
+      recent_only: showAll ? 'false' : 'true',
+    });
     const resp   = await fetch(`${BASE}/api/v1/jira/projects?${params}`);
 
     if (resp.status === 401) {
@@ -1282,6 +1544,7 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
 
     updateNavSteps();
     updateAnalyzeBtn();
+    updateJiraProjectLink();
 
   } catch (err) {
     state.connected = false;
@@ -1322,29 +1585,60 @@ fileInput.addEventListener('change', () => {
   if (fileInput.files[0]) loadFile(fileInput.files[0]);
 });
 
-function loadFile(file) {
-  const allowed = ['.txt', '.vtt', '.srt'];
+async function loadFile(file) {
+  // Text-like formats the browser can decode directly; binary formats
+  // (.docx, .pdf) are uploaded to /api/v1/extract-text for server-side extraction.
+  const plainTextExts  = new Set(['.txt', '.md', '.vtt', '.srt']);
+  const binaryExts     = new Set(['.docx', '.pdf']);
   const ext = '.' + file.name.split('.').pop().toLowerCase();
-  if (!allowed.includes(ext)) {
-    alert('Unsupported file type. Please upload a .txt, .vtt, or .srt file.');
+
+  if (!plainTextExts.has(ext) && !binaryExts.has(ext)) {
+    alert('Unsupported file type. Supported: .txt, .md, .vtt, .srt, .docx, .pdf');
     return;
   }
 
-  const reader = new FileReader();
-  reader.onload = e => {
-    document.getElementById('ai-badge').style.display = 'none';
-    document.getElementById('download-generated').style.display = 'none';
-    const text = e.target.result;
-    document.getElementById('transcript-text').value = text;
-    state.transcriptText = text;
+  const label     = document.getElementById('file-name-label');
+  const textarea  = document.getElementById('transcript-text');
+  const aiBadge   = document.getElementById('ai-badge');
+  const dlGen     = document.getElementById('download-generated');
 
-    const label = document.getElementById('file-name-label');
-    label.textContent = file.name;
-    label.style.display = 'block';
-
+  const finish = (text) => {
+    aiBadge.style.display = 'none';
+    dlGen.style.display   = 'none';
+    textarea.value        = text;
+    state.transcriptText  = text;
+    label.textContent     = file.name;
+    label.style.display   = 'block';
     updateAnalyzeBtn();
   };
-  reader.readAsText(file);
+
+  if (plainTextExts.has(ext)) {
+    const reader = new FileReader();
+    reader.onload = e => finish(e.target.result);
+    reader.readAsText(file);
+    return;
+  }
+
+  // Binary format: POST to /api/v1/extract-text as multipart.
+  label.textContent   = `Extracting text from ${file.name}...`;
+  label.style.display = 'block';
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const resp = await fetch(`${BASE}/api/v1/extract-text`, { method: 'POST', body: form });
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(extractErrorMsg(data.detail, `Server error ${resp.status}`));
+    }
+    const data = await resp.json();
+    if (!data.text) throw new Error('Server returned no text from the uploaded file.');
+    dbg(5, `[extract] ${ext} → ${data.chars} chars`);
+    finish(data.text);
+  } catch (err) {
+    label.textContent = '';
+    label.style.display = 'none';
+    alert(`Could not read ${file.name}: ${err.message}`);
+  }
 }
 
 // Textarea input
@@ -1362,12 +1656,20 @@ document.getElementById('transcript-text').addEventListener('input', function (e
   updateAnalyzeBtn();
 });
 
+// "Show all projects I can write to" toggle — re-fetch with the new filter.
+document.getElementById('toggle-show-all-projects').addEventListener('change', () => {
+  if (state.connected) {
+    document.getElementById('btn-connect').click();
+  }
+});
+
 // Project dropdown — when user selects from dropdown, update the text input
 document.getElementById('project-select').addEventListener('change', function () {
   if (this.value) {
     document.getElementById('project-key-input').value = this.value;
     state.projectKey = this.value;
     updateAnalyzeBtn();
+    updateJiraProjectLink();
     // Re-fetch context for the new project
     if (state.connected) {
       fetch(`${BASE}/api/v1/jira/context?base_url=${encodeURIComponent(state.baseUrl)}&project_key=${state.projectKey}`)
@@ -1391,6 +1693,7 @@ document.getElementById('project-key-input').addEventListener('input', function 
 
   state.projectKey = val.toUpperCase();
   updateAnalyzeBtn();
+  updateJiraProjectLink();
 
   // Re-fetch Jira context when project key changes
   if (state.connected && state.projectKey.length >= 2) {
@@ -1409,6 +1712,29 @@ function updateAnalyzeBtn() {
   btn.disabled = !(connected && hasProject && hasTranscript);
 }
 
+// Keep the "Link to Jira" hyperlink next to the project-key label in sync
+// with whatever key is currently selected.  Greys out and becomes
+// unclickable when no key is set.
+function updateJiraProjectLink() {
+  const link = document.getElementById('jira-project-link');
+  if (!link) return;
+  const key  = (state.projectKey || '').trim();
+  const base = (state.baseUrl   || '').trim().replace(/\/$/, '');
+  if (key && base) {
+    link.href = `${base}/projects/${encodeURIComponent(key)}`;
+    link.style.color = '#1a4f9c';
+    link.style.pointerEvents = 'auto';
+    link.style.textDecoration = 'underline';
+    link.setAttribute('aria-disabled', 'false');
+  } else {
+    link.href = '#';
+    link.style.color = '#9aa0b0';
+    link.style.pointerEvents = 'none';
+    link.style.textDecoration = 'none';
+    link.setAttribute('aria-disabled', 'true');
+  }
+}
+
 // Analyze button
 document.getElementById('btn-analyze').addEventListener('click', async () => {
   const btn       = document.getElementById('btn-analyze');
@@ -1422,7 +1748,9 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
   const transcript = (document.getElementById('transcript-text').value || '').trim();
   const meetingTitle = document.getElementById('meeting-title').value.trim() || 'Meeting';
 
-  showAlert(infoEl, 'Running pipeline in dry-run mode. This may take 10-30 seconds...');
+  const estMin = Math.max(1, Math.round(transcript.length / 20000));
+  const timeMsg = estMin <= 1 ? 'about 1 minute' : `about ${estMin} minutes`;
+  showAlert(infoEl, `Running pipeline in dry-run mode. Estimated time: ${timeMsg} (3 LLM calls on ${Math.round(transcript.length/1000)}k chars)...`);
 
   try {
     const payload = {
@@ -1474,7 +1802,7 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       return;
     }
 
-    // Store drafts
+    // Store drafts and rejected items
     state.draftTickets = data.tickets.map(t => ({
       email_id:    t.ticket_id,
       summary:     t.summary,
@@ -1483,6 +1811,7 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       checked:     true,
       deleted:     false,
     }));
+    state.rejectedItems = data.rejected || [];
 
     // Check for duplicate tickets in Jira
     try {
@@ -1536,6 +1865,10 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
           const existingUsers = state.jiraContext.users || [];
           state.jiraContext = { ...enrichData.context, users: enrichData.context.users || existingUsers };
         }
+        // Resolve "suggested_assignee" names into Jira accountIds so the
+        // per-row dropdown auto-selects the right person.  Must run AFTER
+        // the context merge so state.jiraContext.users is populated.
+        resolveAssigneesFromNames();
       }
       hideAlert(infoEl);
     } catch (e) {
@@ -1543,7 +1876,13 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       hideAlert(infoEl);
     }
 
-    renderTickets();
+    // Auto-calculate dates from anchor if enrichment didn't provide them
+    const hasAnyDates = state.draftTickets.some(t => t.start_date || t.due_date);
+    if (!hasAnyDates) {
+      recalcDatesFromAnchor();
+    } else {
+      renderTickets();
+    }
     document.getElementById('section-tickets').style.display = 'block';
     document.getElementById('section-tickets').scrollIntoView({ behavior: 'smooth' });
     updateNavSteps();
@@ -1620,6 +1959,17 @@ function renderTickets() {
             `<option value="${p}" ${ticket.priority === p ? 'selected' : ''}>${p}</option>`
           ).join('')}
         </select>
+      </td>
+      <td class="col-start">
+        <input type="date" class="start-date-input" data-idx="${idx}" value="${escHtml(ticket.start_date || '')}" ${ticket.deleted ? 'disabled' : ''} />
+      </td>
+      <td class="col-due">
+        <input type="date" class="due-date-input" data-idx="${idx}" value="${escHtml(ticket.due_date || '')}" ${ticket.deleted ? 'disabled' : ''} />
+      </td>
+      <td class="col-deps">
+        ${(ticket.dependency_indices || []).map(di =>
+          '<span class="dep-badge">' + escHtml('#' + (di + 1)) + '</span>'
+        ).join(' ')}
       </td>
       <td class="col-sprint">
         <select class="sprint-select" data-idx="${idx}" ${ticket.deleted ? 'disabled' : ''}>
@@ -1702,9 +2052,11 @@ function renderTickets() {
 
   // Bind effort input changes
   tbody.querySelectorAll('.effort-input').forEach(inp => {
-    inp.addEventListener('input', function () {
+    inp.addEventListener('change', function () {
       const idx = parseInt(this.dataset.idx);
       state.draftTickets[idx].effort = this.value;
+      // Re-run anchor scheduling when effort changes (affects due dates downstream)
+      if (document.getElementById('anchor-date').value) recalcDatesFromAnchor();
     });
   });
 
@@ -1713,6 +2065,22 @@ function renderTickets() {
     sel.addEventListener('change', function () {
       const idx = parseInt(this.dataset.idx);
       state.draftTickets[idx].priority = this.value;
+    });
+  });
+
+  // Bind start date changes
+  tbody.querySelectorAll('.start-date-input').forEach(inp => {
+    inp.addEventListener('change', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].start_date = this.value || null;
+    });
+  });
+
+  // Bind due date changes
+  tbody.querySelectorAll('.due-date-input').forEach(inp => {
+    inp.addEventListener('change', function () {
+      const idx = parseInt(this.dataset.idx);
+      state.draftTickets[idx].due_date = this.value || null;
     });
   });
 
@@ -1769,7 +2137,296 @@ function renderTickets() {
 
   updateSelectedCount();
   updateSelectAll();
+  renderRejectedPanel();
+  populateBulkDropdowns();
 }
+
+/* =========================================================================
+   Rejected items panel — shows what Agent 2 filtered out
+========================================================================= */
+function renderRejectedPanel() {
+  const panel = document.getElementById('rejected-panel');
+  const list = document.getElementById('rejected-list');
+  const label = document.getElementById('rejected-label');
+  const items = state.rejectedItems || [];
+
+  if (items.length === 0) {
+    panel.style.display = 'none';
+    return;
+  }
+
+  panel.style.display = 'block';
+  label.textContent = `${items.length} item${items.length !== 1 ? 's' : ''} filtered out by Agent 2 (Router)`;
+  // Build list items using safe DOM methods
+  list.textContent = '';
+  items.forEach(r => {
+    const li = document.createElement('li');
+    const strong = document.createElement('strong');
+    strong.textContent = r.summary || '?';
+    const reason = document.createElement('span');
+    reason.className = 'rejected-reason';
+    reason.textContent = ' \u2014 ' + (r.reason || '');
+    li.appendChild(strong);
+    li.appendChild(reason);
+    list.appendChild(li);
+  });
+}
+
+// Toggle collapsed/expanded
+document.getElementById('rejected-toggle').addEventListener('click', function () {
+  this.classList.toggle('open');
+  document.getElementById('rejected-list').classList.toggle('open');
+});
+
+/* =========================================================================
+   Bulk-apply bar — set a field value on all checked rows at once
+========================================================================= */
+function _addOption(select, value, text) {
+  const opt = document.createElement('option');
+  opt.value = value;
+  opt.textContent = text;
+  select.appendChild(opt);
+}
+
+function populateBulkDropdowns() {
+  // Epic
+  const bulkEpic = document.getElementById('bulk-epic');
+  bulkEpic.textContent = '';
+  _addOption(bulkEpic, '', '\u2014');
+  (state.jiraContext.epics || []).forEach(e => {
+    _addOption(bulkEpic, e.key, `${e.summary} (${e.key})`);
+  });
+  _addOption(bulkEpic, '__create_new__', '+ Create New Epic...');
+
+  // Sprint
+  const bulkSprint = document.getElementById('bulk-sprint');
+  bulkSprint.textContent = '';
+  _addOption(bulkSprint, '', '\u2014');
+  (state.jiraContext.sprints || []).forEach(s => {
+    _addOption(bulkSprint, s.id, s.name);
+  });
+
+  // Fix Version
+  const bulkFixver = document.getElementById('bulk-fixver');
+  bulkFixver.textContent = '';
+  _addOption(bulkFixver, '', '\u2014');
+  (state.jiraContext.fix_versions || []).forEach(v => {
+    _addOption(bulkFixver, v.id, v.name);
+  });
+
+  // Assignee
+  const bulkAssignee = document.getElementById('bulk-assignee');
+  bulkAssignee.textContent = '';
+  _addOption(bulkAssignee, '', '\u2014');
+  (state.jiraContext.users || []).forEach(u => {
+    _addOption(bulkAssignee, u.accountId, u.displayName);
+  });
+}
+
+// Show/hide the new epic name input when "Create New Epic" is selected
+document.getElementById('bulk-epic').addEventListener('change', function () {
+  const nameInput = document.getElementById('bulk-epic-new-name');
+  if (this.value === '__create_new__') {
+    nameInput.style.display = 'block';
+    nameInput.focus();
+  } else {
+    nameInput.style.display = 'none';
+    nameInput.value = '';
+  }
+});
+
+document.getElementById('bulk-apply-btn').addEventListener('click', function () {
+  const epicSel     = document.getElementById('bulk-epic');
+  const epicVal     = epicSel.value;
+  const newNameInput = document.getElementById('bulk-epic-new-name');
+  const sprintVal   = document.getElementById('bulk-sprint').value;
+  const fixverVal   = document.getElementById('bulk-fixver').value;
+  const assigneeVal = document.getElementById('bulk-assignee').value;
+  const priorityVal = document.getElementById('bulk-priority').value;
+  const startVal    = document.getElementById('bulk-start-date').value;
+  const dueVal      = document.getElementById('bulk-due-date').value;
+  const labelsRaw   = document.getElementById('bulk-labels').value;
+
+  // Parse bulk labels: split on comma, trim, drop empties.
+  // These MERGE on top of any per-row labels already entered (dedupe — no duplicates).
+  // Note: 'sageJiraBot' and the batch timestamp are added server-side at create time,
+  // so we don't touch them here.
+  const bulkLabels = labelsRaw
+    .split(',')
+    .map(l => l.trim())
+    .filter(Boolean);
+
+  // Handle "Create New Epic" — read from the text input
+  let resolvedEpic = epicVal;
+  if (epicVal === '__create_new__') {
+    const name = newNameInput.value.trim();
+    if (name) {
+      resolvedEpic = 'new:' + name;
+      // Add to context so it appears in per-row dropdowns after re-render
+      if (!state.jiraContext.epics) state.jiraContext.epics = [];
+      const alreadyExists = state.jiraContext.epics.some(e => e.key === resolvedEpic);
+      if (!alreadyExists) {
+        state.jiraContext.epics.push({ key: resolvedEpic, summary: name + ' (new)' });
+      }
+    } else {
+      resolvedEpic = '';
+    }
+  }
+
+  let applied = 0;
+  state.draftTickets.forEach(t => {
+    if (!t.checked || t.deleted) return;
+    if (resolvedEpic)  t.suggested_epic_key = resolvedEpic;
+    if (sprintVal)     t.suggested_sprint_id = parseInt(sprintVal);
+    if (fixverVal)     t.suggested_fix_version_id = fixverVal;
+    if (assigneeVal)   t.suggested_assignee_id = assigneeVal;
+    if (priorityVal)   t.priority = priorityVal;
+    if (startVal)      t.start_date = startVal;
+    if (dueVal)        t.due_date = dueVal;
+    if (bulkLabels.length > 0) {
+      // Merge bulk labels with existing per-row labels (stored as comma-separated string).
+      const existing = (t.extra_labels || '')
+        .split(',')
+        .map(l => l.trim())
+        .filter(Boolean);
+      const merged = [];
+      const seenLower = new Set();
+      existing.concat(bulkLabels).forEach(lbl => {
+        const key = lbl.toLowerCase();
+        if (!seenLower.has(key)) {
+          seenLower.add(key);
+          merged.push(lbl);
+        }
+      });
+      t.extra_labels = merged.join(',');
+    }
+    applied++;
+  });
+
+  if (applied > 0) renderTickets();
+
+  // Reset bulk controls
+  epicSel.value = '';
+  newNameInput.style.display = 'none';
+  newNameInput.value = '';
+  document.getElementById('bulk-sprint').value = '';
+  document.getElementById('bulk-fixver').value = '';
+  document.getElementById('bulk-assignee').value = '';
+  document.getElementById('bulk-priority').value = '';
+  document.getElementById('bulk-start-date').value = '';
+  document.getElementById('bulk-due-date').value = '';
+  document.getElementById('bulk-labels').value = '';
+});
+
+/* =========================================================================
+   Anchor date scheduling — auto-calculate dates from effort + dependencies
+========================================================================= */
+
+// Set default anchor date to 1 week from today
+(function initAnchorDate() {
+  const d = new Date();
+  d.setDate(d.getDate() + 7);
+  // Skip to Monday if weekend
+  const day = d.getDay();
+  if (day === 0) d.setDate(d.getDate() + 1);
+  if (day === 6) d.setDate(d.getDate() + 2);
+  document.getElementById('anchor-date').value = d.toISOString().split('T')[0];
+})();
+
+function _parseEffortToDays(effort) {
+  if (!effort) return 3; // default 3 days if no estimate
+  const str = effort.toLowerCase().trim();
+  let days = 0;
+  const weeks = str.match(/(\d+)\s*w/);
+  const dMatch = str.match(/(\d+)\s*d/);
+  const hours = str.match(/(\d+)\s*h/);
+  if (weeks) days += parseInt(weeks[1]) * 5;
+  if (dMatch) days += parseInt(dMatch[1]);
+  if (hours) days += Math.ceil(parseInt(hours[1]) / 8);
+  return days || 3; // fallback to 3 if unparseable
+}
+
+function _addBusinessDays(dateStr, numDays) {
+  const d = new Date(dateStr + 'T00:00:00');
+  let added = 0;
+  while (added < numDays) {
+    d.setDate(d.getDate() + 1);
+    const day = d.getDay();
+    if (day !== 0 && day !== 6) added++;
+  }
+  return d.toISOString().split('T')[0];
+}
+
+function recalcDatesFromAnchor() {
+  const anchor = document.getElementById('anchor-date').value;
+  if (!anchor) return;
+
+  const tickets = state.draftTickets;
+  if (!tickets || tickets.length === 0) return;
+
+  // Build a scheduling order using topological sort on dependencies
+  const n = tickets.length;
+  const startDates = new Array(n).fill(null);
+  const dueDates = new Array(n).fill(null);
+
+  // Build reverse dependency map: for each ticket, which tickets must finish first?
+  const blockedBy = new Array(n).fill(null).map(() => []);
+  tickets.forEach((t, i) => {
+    (t.dependency_indices || []).forEach(depIdx => {
+      // t blocks depIdx, meaning depIdx is blocked by t
+      if (depIdx >= 0 && depIdx < n) blockedBy[depIdx].push(i);
+    });
+  });
+
+  // Topological sort (Kahn's algorithm)
+  const inDegree = blockedBy.map(b => b.length);
+  const queue = [];
+  for (let i = 0; i < n; i++) {
+    if (inDegree[i] === 0 && !tickets[i].deleted) queue.push(i);
+  }
+
+  const order = [];
+  while (queue.length > 0) {
+    const idx = queue.shift();
+    order.push(idx);
+    // Find tickets that idx blocks
+    (tickets[idx].dependency_indices || []).forEach(depIdx => {
+      if (depIdx >= 0 && depIdx < n) {
+        inDegree[depIdx]--;
+        if (inDegree[depIdx] === 0) queue.push(depIdx);
+      }
+    });
+  }
+
+  // Add any remaining (circular deps or deleted) in original order
+  for (let i = 0; i < n; i++) {
+    if (!order.includes(i) && !tickets[i].deleted) order.push(i);
+  }
+
+  // Calculate dates in topological order
+  order.forEach(idx => {
+    const t = tickets[idx];
+    const effortDays = _parseEffortToDays(t.effort);
+
+    // Start date = max(anchor, latest due date of blockers)
+    let earliest = anchor;
+    blockedBy[idx].forEach(blockerIdx => {
+      if (dueDates[blockerIdx] && dueDates[blockerIdx] > earliest) {
+        earliest = _addBusinessDays(dueDates[blockerIdx], 0); // day after blocker ends
+      }
+    });
+
+    startDates[idx] = earliest;
+    dueDates[idx] = _addBusinessDays(earliest, effortDays);
+
+    t.start_date = startDates[idx];
+    t.due_date = dueDates[idx];
+  });
+
+  renderTickets();
+}
+
+document.getElementById('anchor-recalc-btn').addEventListener('click', recalcDatesFromAnchor);
 
 function escHtml(str) {
   return (str || '')
@@ -1943,14 +2600,15 @@ async function initSSO() {
     const config = await resp.json();
 
     if (!config.sso_enabled) {
-      document.getElementById('sso-disabled').style.display = 'block';
+      // Azure AD SSO is not configured.  The #sso-disabled placeholder
+      // div was removed because Jira OAuth now covers identity.  Just
+      // hide the active SSO section and return.
       document.getElementById('sso-section').style.display  = 'none';
       return;
     }
 
-    // SSO is enabled — show sign-in section, keep disabled notice hidden
+    // SSO is enabled — show sign-in section
     document.getElementById('sso-section').style.display  = 'block';
-    document.getElementById('sso-disabled').style.display = 'none';
 
     // Initialize MSAL
     msalInstance = new msal.PublicClientApplication({
@@ -2159,15 +2817,121 @@ document.getElementById('btn-sample').addEventListener('click', () => {
 
 // Boot the SSO check on page load
 initSSO();
+// initJiraOAuth resolves signed-in state AND kicks off auto-connect when signed in
+initJiraOAuth();
 
-// Auto-connect to Jira on page load (dcri.atlassian.net is the default)
-// This saves the user from having to click "Connect" manually every time.
-setTimeout(() => {
+/* =========================================================================
+   Atlassian OAuth (per-user Jira sign-in)
+   ========================================================================= */
+async function initJiraOAuth() {
+  try {
+    const resp = await fetch(`${BASE}/api/v1/auth/jira/status`);
+    if (!resp.ok) throw new Error(`status ${resp.status}`);
+    const data = await resp.json();
+
+    const cfgEl    = document.getElementById('jira-oauth-configured');
+    const uncfgEl  = document.getElementById('jira-oauth-unconfigured');
+    const outEl    = document.getElementById('jira-oauth-signed-out');
+    const inEl     = document.getElementById('jira-oauth-signed-in');
+
+    if (!data.configured) {
+      cfgEl.style.display   = 'none';
+      uncfgEl.style.display = 'block';
+      return;
+    }
+    cfgEl.style.display   = 'block';
+    uncfgEl.style.display = 'none';
+
+    if (data.signed_in) {
+      outEl.style.display = 'none';
+      inEl.style.display  = 'flex';
+      document.getElementById('jira-oauth-name').textContent  = data.display_name || '(Atlassian user)';
+      document.getElementById('jira-oauth-email').textContent = data.email || data.site_url || '';
+      state.jiraOAuth = { signedIn: true, email: data.email, name: data.display_name, siteUrl: data.site_url };
+      // Auto-connect now that we have a verified per-user token.  The
+      // /jira/projects call will use the OAuth session and return only
+      // projects the signed-in user can write to.
+      autoConnectIfIdle();
+    } else {
+      outEl.style.display = 'block';
+      inEl.style.display  = 'none';
+      state.jiraOAuth = { signedIn: false };
+      // Do NOT auto-connect when the user is not signed in — this avoids
+      // leaking the shared service-account's view of all 500+ projects.
+      // User must click "Sign in to Jira" first.
+      setNotSignedInUI();
+    }
+  } catch (e) {
+    dbg(1, '[JiraOAuth] status check failed:', e);
+  }
+}
+
+document.getElementById('btn-jira-signin').addEventListener('click', () => {
+  // Full-page redirect to kick off the OAuth flow; Atlassian will send the
+  // user back to /api/v1/auth/jira/callback, which then redirects here.
+  window.location.href = `${BASE}/api/v1/auth/jira/login`;
+});
+
+document.getElementById('btn-jira-signout').addEventListener('click', async () => {
+  try {
+    await fetch(`${BASE}/api/v1/auth/jira/logout`, { method: 'POST' });
+  } catch (e) { dbg(1, '[JiraOAuth] logout failed:', e); }
+  state.jiraOAuth = { signedIn: false };
+  state.connected = false;
+  // Reset the project list so stale projects from the previous session don't linger
+  const sel = document.getElementById('project-select');
+  if (sel) {
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '— sign in to load projects —';
+    sel.appendChild(defaultOpt);
+    sel.disabled = true;
+  }
+  document.getElementById('conn-label').textContent = 'Not connected';
+  document.getElementById('conn-dot').classList.remove('connected', 'error');
+  updateAnalyzeBtn();
+  initJiraOAuth();
+});
+
+// Auto-connect to Jira once the user has a verified OAuth session.  Skipped
+// when already connected (e.g. user manually clicked Connect before
+// initJiraOAuth resolved).
+function autoConnectIfIdle() {
+  if (state.connected) return;
   const baseUrlInput = document.getElementById('jira-base-url');
   if (baseUrlInput && baseUrlInput.value.includes('atlassian.net')) {
     document.getElementById('btn-connect').click();
   }
-}, 500);
+}
+
+// When the user is not signed in, reflect that in the Step-1 UI so they
+// do not see a stale "Connected — 519 projects loaded" message and are
+// guided toward the sign-in button instead.
+function setNotSignedInUI() {
+  const label = document.getElementById('conn-label');
+  const dot   = document.getElementById('conn-dot');
+  const btn   = document.getElementById('btn-connect');
+  const sel   = document.getElementById('project-select');
+  if (label) label.textContent = 'Sign in to Jira first (below)';
+  if (dot)   { dot.classList.remove('connected'); dot.classList.remove('error'); }
+  if (btn)   btn.disabled = true;
+  if (sel) {
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '';
+    defaultOpt.textContent = '— sign in to load projects —';
+    sel.appendChild(defaultOpt);
+    sel.disabled = true;
+  }
+  state.connected = false;
+  updateAnalyzeBtn();
+}
+
+// Auto-connect is now gated on Jira OAuth sign-in — see initJiraOAuth()
+// above.  When a user signs in we call autoConnectIfIdle() from there.
+// When they're not signed in we explicitly show a "Sign in first" state
+// so nobody leaks the service-account's full-org project list.
 </script>
 </body>
 </html>

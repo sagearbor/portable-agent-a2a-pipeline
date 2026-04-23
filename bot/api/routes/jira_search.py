@@ -14,10 +14,14 @@ https://*.atlassian.net addresses are accepted.
 import re
 import requests
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from bot.api.routes._jira_helpers import validate_base_url, get_jira_auth
+from bot.api.routes._jira_helpers import (
+    validate_base_url,
+    get_jira_auth,
+    get_jira_request_config,
+)
 
 router = APIRouter()
 
@@ -92,7 +96,8 @@ class CheckDuplicatesResponse(BaseModel):
 
 @router.post("/jira/check-duplicates", response_model=CheckDuplicatesResponse)
 async def check_duplicates(
-    req: CheckDuplicatesRequest,
+    req:     CheckDuplicatesRequest,
+    request: Request,
 ) -> CheckDuplicatesResponse:
     """
     Check Jira for potential duplicate issues matching the given summaries.
@@ -102,15 +107,20 @@ async def check_duplicates(
     2. Builds JQL: project = "KEY" AND summary ~ "kw1 kw2" AND statusCategory != Done
     3. Calls Jira REST API (POST /rest/api/3/search/jql)
     4. Returns up to 3 matching issues per summary
+
+    Auth preference: OAuth session when signed in, else service-account.
+    ``url`` in each duplicate result points at the user-browsable site URL
+    (dcri.atlassian.net/browse/<KEY>), not the api.atlassian.com API URL,
+    so that clicking opens the ticket in the user's browser.
     """
-    # Validate base_url (SSRF guard)
-    base = validate_base_url(req.base_url)
+    # Browsable site URL — stays as-is even under OAuth so that the
+    # returned /browse/KEY links are clickable.
+    site_base = validate_base_url(req.base_url)
 
-    # Resolve credentials via shared helper
-    auth = get_jira_auth()
-    headers = {"Accept": "application/json", "Content-Type": "application/json"}
+    # API-call base — differs under OAuth (api.atlassian.com/ex/jira/<cid>)
+    cfg = get_jira_request_config(request, site_base)
 
-    jira_search_url = f"{base}/rest/api/3/search/jql"
+    jira_search_url = f"{cfg.base}/rest/api/3/search/jql"
 
     results: list[DuplicateResult] = []
 
@@ -137,12 +147,16 @@ async def check_duplicates(
         }
 
         try:
+            # SSRF-safe: cfg.base is either the allowlisted site URL
+            # (validated by validate_base_url) or the literal
+            # api.atlassian.com host with a cloud_id sourced from our
+            # OAuth session.  Path is a fixed literal; only structured
+            # fields from the response are consumed.
+            # nosemgrep: python.flask.security.injection.ssrf-requests.ssrf-requests
             resp = requests.post(
                 jira_search_url,
                 json=payload,
-                auth=auth,
-                headers=headers,
-                timeout=15,
+                **cfg.kwargs,
             )
 
             if resp.status_code in (401, 403):
@@ -164,7 +178,7 @@ async def check_duplicates(
                 duplicates.append(DuplicateMatch(
                     key=issue["key"],
                     summary=issue["fields"].get("summary", ""),
-                    url=f"{base}/browse/{issue['key']}",
+                    url=f"{site_base}/browse/{issue['key']}",
                 ))
 
             results.append(DuplicateResult(
@@ -177,12 +191,12 @@ async def check_duplicates(
         except requests.exceptions.ConnectionError as exc:
             raise HTTPException(
                 status_code=502,
-                detail=f"Could not reach Jira at {base}: {exc}",
+                detail=f"Could not reach Jira: {exc}",
             )
         except requests.exceptions.Timeout:
             raise HTTPException(
                 status_code=504,
-                detail=f"Timed out connecting to Jira at {base}",
+                detail="Timed out connecting to Jira",
             )
         except Exception as exc:
             raise HTTPException(

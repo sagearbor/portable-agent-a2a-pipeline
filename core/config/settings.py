@@ -64,6 +64,24 @@ MODELS = {
 AZURE_AUTH_MODE = os.environ.get("AZURE_AUTH_MODE", "az_login")  # "az_login" | "managed_identity" | "api_key"
 
 # ---------------------------------------------------------------------------
+# Model context window sizes (input tokens)
+# Used by transcript_adapter to decide whether to chunk or send whole.
+# Conservative estimates — leave headroom for system prompt + output.
+# ---------------------------------------------------------------------------
+MODEL_CONTEXT_WINDOWS = {
+    "gpt-5.2":       1_000_000,
+    "gpt-5.3-codex": 1_000_000,
+    "gpt-4o":          128_000,
+    "gpt-4-turbo":     128_000,
+    "o3":              200_000,
+    "o4-mini":         200_000,
+}
+
+# Max input tokens to use for transcript (fraction of context window).
+# Reserves the rest for system prompt + output tokens.
+MAX_INPUT_FRACTION = 0.6
+
+# ---------------------------------------------------------------------------
 # Temperature / shared inference settings
 # ---------------------------------------------------------------------------
 TEMPERATURE = 0.2   # lower = more deterministic, good for routing agents
