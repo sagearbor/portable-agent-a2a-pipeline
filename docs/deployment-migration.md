@@ -118,6 +118,36 @@ az containerapp create \
 ```
 
 
+### 5b. Managed-identity primer (what the object IDs in our notes mean)
+
+Object IDs are the canonical way Azure RBAC grants permissions to non-human
+principals. In our notes and IT tickets you'll see:
+
+- `2e3747a7-935f-457a-9d39-968beea39d7a` — **system-assigned managed identity
+  attached to the dev VM `alp-dsvm-003`**. This identity represents "whatever
+  code runs on the VM as that machine." It is *not* the same as the user scb2
+  or any Container App. It only becomes useful if the app is running directly
+  on the VM (not in Docker), because Docker containers on the VM can't reach
+  the VM's IMDS endpoint without extra plumbing. **Status: no OpenAI role yet.**
+  An IT request to grant `Cognitive Services OpenAI User` on `ai-foundry-dcri-sage`
+  to this object ID would eliminate the bearer-token refresh hack in
+  `start-docker.sh` *for the VM POC only*. Not strictly required — the bearer
+  token approach works — so this ticket is low-priority and optional.
+
+- `<TBD — will be created when we deploy the Container App>` — **user-assigned
+  managed identity for the production Container App**. This is the one that
+  actually matters for the migration. Its object ID doesn't exist yet; we'll
+  create it as part of cutover step 3 below. It gets granted
+  `Cognitive Services OpenAI User` on `ai-foundry-dcri-sage`,
+  `Key Vault Secrets User` on the Key Vault, and `AcrPull` on the Container
+  Registry. Once created, the container app's `DefaultAzureCredential` picks
+  it up automatically — no keys, no tokens, no cron.
+
+So: two different IDs, two different scopes, only the second one is
+required for production. The first is just tech-debt cleanup on the current
+dev POC.
+
+
 ### 6. Migration cutover steps (the day we flip)
 
 Run in order:

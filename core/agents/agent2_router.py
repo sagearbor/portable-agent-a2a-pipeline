@@ -13,7 +13,7 @@ In Phase 2 this becomes a real Azure agent that receives a thread message.
 
 import json
 from core.clients.client import get_client, token_limit_kwarg
-from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
+from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, AGENT2_MODEL
 
 AGENT_DEFINITION = {
     "name": "router",
@@ -28,6 +28,7 @@ AGENT_DEFINITION = {
         "  - For approved items, confirm or adjust the suggested_priority\n"
         "  - For approved items, confirm or improve the suggested_jira_summary\n"
         "  - For each item add 'routing_reason' explaining in one sentence why it was approved or rejected\n"
+        "  - PRESERVE the 'suggested_assignee' field on each item exactly as received — do not drop it, rename it, or blank it.\n"
         "\n"
         "Return a JSON object with two arrays:\n"
         "  { \"approved\": [...items to become tickets...], \"rejected\": [...items filtered out...] }\n"
@@ -50,7 +51,8 @@ def run(email_extracts: list[dict]) -> dict:
     print(f"{'='*60}")
     print(f"[agent2] Received {len(email_extracts)} items from Agent 1")
 
-    client, model = get_client()
+    client, default_model = get_client()
+    model = AGENT2_MODEL or default_model
     print(f"[agent2] Calling LLM ({model}) to route...")
 
     input_text = f"Here are the extracts to evaluate:\n{json.dumps(email_extracts, indent=2)}"
@@ -99,6 +101,17 @@ def run(email_extracts: list[dict]) -> dict:
     else:
         approved = parsed.get("approved", [])
         rejected = parsed.get("rejected", [])
+
+    # Deterministic carry-forward: if the router LLM dropped suggested_assignee,
+    # restore it from the original extract keyed by email_id. This is cheaper
+    # and more reliable than asking the LLM to preserve extra fields.
+    extract_by_id = {e.get("email_id"): e for e in email_extracts if e.get("email_id")}
+    for item in approved:
+        eid = item.get("email_id")
+        if eid and not item.get("suggested_assignee"):
+            src = extract_by_id.get(eid)
+            if src and src.get("suggested_assignee"):
+                item["suggested_assignee"] = src["suggested_assignee"]
 
     print(f"[agent2] Approved {len(approved)} items for ticket creation")
     for item in approved:

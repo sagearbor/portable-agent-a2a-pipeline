@@ -1065,7 +1065,7 @@
             Link to Jira ↗
           </a>
         </label>
-        <input type="text" id="project-key-input" placeholder="e.g. ST" value="ST" style="text-transform:uppercase; margin-bottom:4px;" />
+        <input type="text" id="project-key-input" placeholder="e.g. ST" value="" style="text-transform:uppercase; margin-bottom:4px;" />
         <select id="project-select" disabled style="font-size:11px;">
           <option value="">— connect to browse all —</option>
         </select>
@@ -1289,7 +1289,7 @@ fetch(`${BASE}/health`).then(r => r.json()).then(d => {
     const h1 = document.querySelector('.logo h1');
     if (h1 && !h1.querySelector('sub')) {
       h1.insertAdjacentHTML('beforeend',
-        ` <sub style="font-size:0.4em;opacity:0.6">v${d.version}</sub>`);
+        ` <sub style="font-size:0.52em;opacity:0.75">v${d.version}</sub>`);
     }
   }
 }).catch(() => {});
@@ -1300,7 +1300,7 @@ fetch(`${BASE}/health`).then(r => r.json()).then(d => {
 const state = {
   connected: false,
   baseUrl:   '',
-  projectKey: 'ST',
+  projectKey: '',
   transcriptText: '',
   draftTickets: [],   // [{summary, priority, description, email_id, checked, deleted}]
   ssoUser: null,      // {email, name, valid} when signed in via Azure AD SSO; null otherwise
@@ -1410,19 +1410,37 @@ function resolveAssigneeIdFromName(name, users) {
 }
 
 function resolveAssigneesFromNames() {
-  const users = state.jiraContext && state.jiraContext.users;
-  if (!Array.isArray(users) || users.length === 0) return;
+  const users = (state.jiraContext && state.jiraContext.users) || [];
+  dbg(5, `[Assignees] Project users loaded: ${users.length}`);
+  if (users.length === 0) {
+    dbg(1, '[Assignees] No users available from /jira/context — cannot auto-resolve. ' +
+           'Check that the selected project has role members (Developers/Administrators).');
+    return;
+  }
+  dbg(8, '[Assignees] User list sample:', users.slice(0, 5).map(u => u.displayName));
+
   let resolved = 0;
-  state.draftTickets.forEach(t => {
-    if (t.suggested_assignee && !t.suggested_assignee_id) {
-      const acct = resolveAssigneeIdFromName(t.suggested_assignee, users);
-      if (acct) {
-        t.suggested_assignee_id = acct;
-        resolved += 1;
+  let withName = 0;
+  state.draftTickets.forEach((t, i) => {
+    if (t.suggested_assignee) {
+      withName += 1;
+      if (!t.suggested_assignee_id) {
+        const acct = resolveAssigneeIdFromName(t.suggested_assignee, users);
+        if (acct) {
+          t.suggested_assignee_id = acct;
+          resolved += 1;
+          dbg(5, `[Assignees]   ticket[${i}] "${t.suggested_assignee}" -> ${acct}`);
+        } else {
+          dbg(5, `[Assignees]   ticket[${i}] "${t.suggested_assignee}" -> NO MATCH (ambiguous or not a project member)`);
+        }
       }
     }
   });
-  dbg(5, `[Assignees] Resolved ${resolved}/${state.draftTickets.length} drafts from suggested names`);
+  dbg(5, `[Assignees] ${withName}/${state.draftTickets.length} drafts had a suggested_assignee from LLM; resolved ${resolved} to accountIds`);
+  if (withName === 0) {
+    dbg(1, '[Assignees] LLM returned no suggested_assignee on any ticket. ' +
+           'Check the server log for "[jira_context] suggested_assignee populated on X/N tickets".');
+  }
 }
 
 /* =========================================================================
@@ -1527,20 +1545,24 @@ document.getElementById('btn-connect').addEventListener('click', async () => {
     // Update state
     state.connected = true;
     state.baseUrl   = baseUrl;
+    saveUserPrefs();
 
     // UI feedback
     dot.classList.add('connected');
     dot.classList.remove('error');
     label.textContent = `Connected — ${projects.length} project${projects.length !== 1 ? 's' : ''} loaded`;
 
-    // Fetch Jira context for the selected project
-    try {
-      const ctxResp = await fetch(`${BASE}/api/v1/jira/context?base_url=${encodeURIComponent(baseUrl)}&project_key=${state.projectKey}`);
-      if (ctxResp.ok) {
-        state.jiraContext = await ctxResp.json();
-        dbg(5, '[Context] Loaded:', state.jiraContext.epics.length, 'epics,', state.jiraContext.sprints.length, 'sprints,', state.jiraContext.fix_versions.length, 'versions');
-      }
-    } catch (e) { dbg(1, '[Context] Failed:', e); }
+    // Fetch Jira context for the selected project — only when we actually
+    // have a project key (avoids ?project_key= firing before user picks one).
+    if (state.projectKey && state.projectKey.length >= 2) {
+      try {
+        const ctxResp = await fetch(`${BASE}/api/v1/jira/context?base_url=${encodeURIComponent(baseUrl)}&project_key=${state.projectKey}`);
+        if (ctxResp.ok) {
+          state.jiraContext = await ctxResp.json();
+          dbg(5, '[Context] Loaded:', state.jiraContext.epics.length, 'epics,', state.jiraContext.sprints.length, 'sprints,', state.jiraContext.fix_versions.length, 'versions');
+        }
+      } catch (e) { dbg(1, '[Context] Failed:', e); }
+    }
 
     updateNavSteps();
     updateAnalyzeBtn();
@@ -1668,6 +1690,7 @@ document.getElementById('project-select').addEventListener('change', function ()
   if (this.value) {
     document.getElementById('project-key-input').value = this.value;
     state.projectKey = this.value;
+    saveUserPrefs();
     updateAnalyzeBtn();
     updateJiraProjectLink();
     // Re-fetch context for the new project
@@ -1692,6 +1715,7 @@ document.getElementById('project-key-input').addEventListener('input', function 
   }
 
   state.projectKey = val.toUpperCase();
+  saveUserPrefs();
   updateAnalyzeBtn();
   updateJiraProjectLink();
 
@@ -1797,7 +1821,12 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
     dbg(5, '[Pipeline] Tickets:', data.tickets ? data.tickets.length : 'none');
 
     if (!data.tickets || data.tickets.length === 0) {
-      showAlert(infoEl, 'The pipeline found no actionable items in this transcript. Try a different transcript.');
+      // Distinguish "pipeline errored" from "pipeline succeeded but nothing to do"
+      if (data.status === 'error' || data.error_message) {
+        showAlert(infoEl, `Pipeline error: ${data.error_message || 'unknown — check server logs'}`);
+      } else {
+        showAlert(infoEl, 'The pipeline found no actionable items in this transcript. Try a different transcript.');
+      }
       setLoading(btn, false);
       return;
     }
@@ -1808,6 +1837,7 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       summary:     t.summary,
       priority:    t.priority || 'Medium',
       description: t.description || '',
+      suggested_assignee: t.suggested_assignee || null,
       checked:     true,
       deleted:     false,
     }));
@@ -2848,6 +2878,9 @@ async function initJiraOAuth() {
       document.getElementById('jira-oauth-name').textContent  = data.display_name || '(Atlassian user)';
       document.getElementById('jira-oauth-email').textContent = data.email || data.site_url || '';
       state.jiraOAuth = { signedIn: true, email: data.email, name: data.display_name, siteUrl: data.site_url };
+      // Load this user's last-used project/base before auto-connecting so
+      // the dropdown defaults to whatever they used last instead of "ST".
+      await loadUserPrefs();
       // Auto-connect now that we have a verified per-user token.  The
       // /jira/projects call will use the OAuth session and return only
       // projects the signed-in user can write to.
@@ -2903,6 +2936,58 @@ function autoConnectIfIdle() {
   if (baseUrlInput && baseUrlInput.value.includes('atlassian.net')) {
     document.getElementById('btn-connect').click();
   }
+}
+
+/* =========================================================================
+   Per-user preferences (last Jira project / base URL). Requires sign-in.
+   Server persists to data/user_prefs.json keyed by Atlassian account_id.
+========================================================================= */
+async function loadUserPrefs() {
+  try {
+    const r = await fetch(`${BASE}/api/v1/user/prefs`);
+    if (!r.ok) return null;
+    const p = await r.json();
+    if (!p || Object.keys(p).length === 0) return null;
+    dbg(5, '[Prefs] Loaded:', p);
+
+    if (p.last_base_url) {
+      const baseInput = document.getElementById('jira-base-url');
+      if (baseInput) baseInput.value = p.last_base_url;
+      state.baseUrl = p.last_base_url;
+    }
+    if (p.last_project_key) {
+      const keyInput = document.getElementById('project-key-input');
+      if (keyInput) keyInput.value = p.last_project_key;
+      state.projectKey = p.last_project_key;
+      updateJiraProjectLink && updateJiraProjectLink();
+    }
+    return p;
+  } catch (e) {
+    dbg(1, '[Prefs] Load failed:', e);
+    return null;
+  }
+}
+
+let _prefsSaveTimer = null;
+function saveUserPrefs() {
+  // Debounce: user may type a key quickly; only hit the server after they pause.
+  if (!state.jiraOAuth || !state.jiraOAuth.signedIn) return;
+  if (_prefsSaveTimer) clearTimeout(_prefsSaveTimer);
+  _prefsSaveTimer = setTimeout(async () => {
+    try {
+      await fetch(`${BASE}/api/v1/user/prefs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          last_project_key: state.projectKey || null,
+          last_base_url:    state.baseUrl    || null,
+        }),
+      });
+      dbg(8, '[Prefs] Saved', { p: state.projectKey, b: state.baseUrl });
+    } catch (e) {
+      dbg(1, '[Prefs] Save failed:', e);
+    }
+  }, 600);
 }
 
 // When the user is not signed in, reflect that in the Step-1 UI so they

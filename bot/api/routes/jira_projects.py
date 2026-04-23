@@ -108,9 +108,11 @@ async def get_jira_projects(
             )
 
             if resp.status_code in (401, 403):
+                # Debug: show Atlassian's exact error so we can tell scope vs creds issues apart
+                print(f"[jira_projects] /project/search -> {resp.status_code}  body={resp.text[:400]!r}  signed_in={cfg.signed_in}  base={cfg.base}")
                 raise HTTPException(
                     status_code=401,
-                    detail="Invalid Jira credentials — check your email and API token.",
+                    detail=f"Jira rejected the request (signed_in={cfg.signed_in}): {resp.text[:200]}",
                 )
 
             if not resp.ok:

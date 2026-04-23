@@ -41,6 +41,7 @@ from bot.api.routes.demo import router as demo_router
 from bot.api.routes.jira_search import router as jira_search_router
 from bot.api.routes.jira_context_api import router as jira_context_api_router
 from bot.api.routes.extract import router as extract_router
+from bot.api.routes.user_prefs_api import router as user_prefs_router
 
 
 # ---------------------------------------------------------------------------
@@ -52,7 +53,7 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown logic."""
     # Startup
     provider = os.environ.get("PROVIDER_OVERRIDE", PROVIDER)
-    project_key = os.environ.get("JIRA_PROJECT_KEY", "ST")
+    project_key = os.environ.get("JIRA_PROJECT_KEY", "(unset — per-user prefs)")
     jira_base = os.environ.get("JIRA_BASE_URL", "(not set)")
     print(f"\n{'='*60}")
     print(f"  SageJiraBot API starting up")
@@ -123,6 +124,7 @@ app.include_router(jira_search_router,       prefix="/api/v1")
 app.include_router(jira_context_api_router,  prefix="/api/v1")
 app.include_router(auth_jira_router,         prefix="/api/v1")
 app.include_router(extract_router,           prefix="/api/v1")
+app.include_router(user_prefs_router,        prefix="/api/v1")
 
 # Mount SSO auth routes at /api/auth
 app.include_router(auth_router, prefix="/api/auth")
@@ -148,9 +150,9 @@ async def health() -> JSONResponse:
         status_code=200,
         content={
             "status": "ok",
-            "version": "0.7.1",
+            "version": "0.8.3",
             "provider": PROVIDER,
-            "jira_project": os.environ.get("JIRA_PROJECT_KEY", "ST"),
+            "jira_project": os.environ.get("JIRA_PROJECT_KEY") or None,
         }
     )
 
@@ -159,7 +161,7 @@ async def health() -> JSONResponse:
 async def ping():
     """Cache-proof version check — new endpoint NGINX has never cached."""
     import datetime
-    return {"v": "0.7.1", "t": datetime.datetime.now().isoformat()}
+    return {"v": "0.8.3", "t": datetime.datetime.now().isoformat()}
 
 
 # ---------------------------------------------------------------------------
