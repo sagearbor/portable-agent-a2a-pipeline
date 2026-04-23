@@ -1364,6 +1364,68 @@ function updateNavSteps() {
 }
 
 /* =========================================================================
+   Assignee resolution — map the LLM-extracted name ("Pandora") to an
+   actual Jira accountId from the project user list.  Populates
+   ``suggested_assignee_id`` on each draft so the per-row Assignee
+   dropdown auto-selects the right person.  Leaves unresolved when
+   ambiguous (e.g. two Joes) so the user explicitly picks.
+========================================================================= */
+
+function _normalizeName(s) {
+  return (s || '').toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function resolveAssigneeIdFromName(name, users) {
+  const target = _normalizeName(name);
+  if (!target || !Array.isArray(users) || users.length === 0) return null;
+
+  // 1) exact displayName match (case-insensitive)
+  const exact = users.filter(u => _normalizeName(u.displayName) === target);
+  if (exact.length === 1) return exact[0].accountId;
+  if (exact.length > 1)   return null;  // ambiguous -> leave for manual pick
+
+  // 2) email local-part match ("jsmith" vs "jsmith@duke.edu")
+  const byEmailLocal = users.filter(u => {
+    const local = ((u.email || '').split('@')[0] || '').toLowerCase();
+    return local && local === target;
+  });
+  if (byEmailLocal.length === 1) return byEmailLocal[0].accountId;
+
+  // 3) unique first-name or last-name match ("Joe" -> "Joe Martinez" only if no other Joe)
+  const asToken = target.split(' ')[0];  // if full name was given, try first name only
+  const byFirstName = users.filter(u => {
+    const parts = _normalizeName(u.displayName).split(' ');
+    return parts[0] === asToken;
+  });
+  if (byFirstName.length === 1) return byFirstName[0].accountId;
+
+  const byLastName = users.filter(u => {
+    const parts = _normalizeName(u.displayName).split(' ');
+    return parts[parts.length - 1] === asToken;
+  });
+  if (byLastName.length === 1) return byLastName[0].accountId;
+
+  // Ambiguous or no match
+  return null;
+}
+
+function resolveAssigneesFromNames() {
+  const users = state.jiraContext && state.jiraContext.users;
+  if (!Array.isArray(users) || users.length === 0) return;
+  let resolved = 0;
+  state.draftTickets.forEach(t => {
+    if (t.suggested_assignee && !t.suggested_assignee_id) {
+      const acct = resolveAssigneeIdFromName(t.suggested_assignee, users);
+      if (acct) {
+        t.suggested_assignee_id = acct;
+        resolved += 1;
+      }
+    }
+  });
+  dbg(5, `[Assignees] Resolved ${resolved}/${state.draftTickets.length} drafts from suggested names`);
+}
+
+/* =========================================================================
    Section 1 — Connect
 ========================================================================= */
 
@@ -1803,6 +1865,10 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
           const existingUsers = state.jiraContext.users || [];
           state.jiraContext = { ...enrichData.context, users: enrichData.context.users || existingUsers };
         }
+        // Resolve "suggested_assignee" names into Jira accountIds so the
+        // per-row dropdown auto-selects the right person.  Must run AFTER
+        // the context merge so state.jiraContext.users is populated.
+        resolveAssigneesFromNames();
       }
       hideAlert(infoEl);
     } catch (e) {

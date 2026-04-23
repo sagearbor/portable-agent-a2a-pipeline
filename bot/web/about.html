@@ -216,16 +216,15 @@
 
     <h3>Say the assignee's name near the task</h3>
     <ul>
-      <li><em>&ldquo;Joe will handle the migration script.&rdquo;</em> &rarr; Agent 1 records Joe&rsquo;s name near that task.</li>
-      <li><em>&ldquo;The migration script needs work. Someone should do it.&rdquo;</em> &rarr; No name linked; assignee will be empty.</li>
+      <li><em>&ldquo;Joe will handle the migration script.&rdquo;</em> &rarr; the draft is pre-assigned to Joe (if there&rsquo;s only one Joe on the project).</li>
+      <li><em>&ldquo;The migration script needs work. Someone should do it.&rdquo;</em> &rarr; no name linked; assignee stays empty.</li>
     </ul>
-    <div class="note">
-      <b>Important limitation today:</b>
-      The name Agent 1 captures is a <em>suggestion</em>, not an automatic assignment. The
-      generated draft ticket will not have the assignee field pre-filled &mdash; you set it in
-      Step 3 via the Assignee dropdown per row, or via the bulk-apply bar. Automatic
-      assignee-resolution from names is on the <a href="#planned">Planned Features</a> list.
-    </div>
+    <p>
+      Name matching tries exact display name first, then email local-part (&ldquo;jsmith&rdquo; &rarr;
+      jsmith@duke.edu), then a unique first-name or last-name match. When it&rsquo;s ambiguous
+      (two people named Joe on the project) the draft is left unassigned with a grey
+      <em>&ldquo;Suggested: Joe&rdquo;</em> hint so you pick the right one from the dropdown.
+    </p>
 
     <h3>Call out deadlines and priority in plain words</h3>
     <ul>
