@@ -1,0 +1,170 @@
+project: portable-agent-a2a-pipeline
+description: Multi-agent pipeline that reads transcripts/emails, routes actionable items, and creates Jira tickets
+
+phases:
+  - id: mvp-web
+    name: MVP Web UI & Pipeline
+    items:
+      - id: "1.1"
+        title: Create developer_checklist.yaml for tempo tracking
+        tags: [docs]
+        status: done
+        acceptance: |
+          - Checklist exists and covers all phases
+
+      - id: "1.2"
+        title: 3-agent pipeline working end-to-end in Docker
+        tags: [backend, config]
+        status: done
+        acceptance: |
+          - Agent1 extracts, Agent2 routes, Agent3 writes tickets
+          - Docker builds and runs behind NGINX at sageapp06
+          - Health endpoint returns version number
+
+      - id: "1.3"
+        title: Smart chunking based on model context window
+        tags: [backend]
+        status: done
+        acceptance: |
+          - Transcript adapter checks model token limit before chunking
+          - Single segment when transcript fits; chunked when too large
+          - MODEL_CONTEXT_WINDOWS in settings.py
+
+      - id: "1.4"
+        title: Transcript-aware Agent 1 prompt
+        tags: [backend]
+        status: done
+        acceptance: |
+          - TRANSCRIPT_INSTRUCTIONS extracts ALL action items from full transcript
+          - Works for both single-segment and chunked transcript paths
+          - Returns ~30 items from a 65k char transcript (not just 1)
+
+      - id: "1.5"
+        title: Agent 2 filtering visibility
+        tags: [backend, frontend]
+        status: done
+        acceptance: |
+          - Agent 2 returns approved + rejected arrays with reasons
+          - Frontend shows collapsible rejected items panel
+          - Pipeline response includes rejected field
+
+      - id: "1.6"
+        title: Bulk-apply bar for ticket table
+        tags: [frontend]
+        status: done
+        acceptance: |
+          - Bar above table with Epic, Sprint, Fix Version, Assignee, Priority
+          - Create New Epic shows text input (not prompt popup)
+          - Apply button sets values on all checked rows
+
+      - id: "1.7"
+        title: Start/Due date columns in ticket table
+        tags: [frontend]
+        status: done
+        acceptance: |
+          - Date picker columns between Priority and Sprint
+          - Dates editable per-row and via bulk-apply
+          - Dates flow through to Jira on batch submit
+          - Stories show as bars in Jira Gantt chart
+
+      - id: "1.8"
+        title: Fix Docker file permission issue
+        tags: [config]
+        status: done
+        acceptance: |
+          - chmod -R a+rX in Dockerfile after COPY
+          - Non-root botuser can read all app files
+
+  - id: pipeline-quality
+    name: Pipeline Quality & Reliability
+    items:
+      - id: "2.1"
+        title: Verify large transcript produces ~30 tickets with new prompt
+        tags: [backend]
+        status: done
+        acceptance: |
+          - 65k char transcript returns similar count to v0.3.0 chunked version
+          - Rejected items panel visible when Agent 2 filters items
+          - No Failed to fetch errors
+
+      - id: "2.2"
+        title: Version number auto-displayed from /health endpoint only
+        tags: [frontend]
+        status: done
+        acceptance: |
+          - No hardcoded version in HTML sidebar
+          - Dynamic fetch from /health populates version badge
+
+      - id: "2.3"
+        title: Fix enrichment token limit causing silent fallback
+        tags: [backend]
+        status: done
+        acceptance: |
+          - enrichment_max_tokens raised from 8192 to MAX_TOKENS (16384)
+          - finish_reason=length logged as warning
+          - JSON parse errors caught with diagnostic logging instead of silent failure
+          - Effort, dates, and dependencies populated for 30+ tickets
+
+      - id: "2.4"
+        title: Anchor date scheduling system
+        tags: [frontend]
+        status: done
+        acceptance: |
+          - Anchor date input defaults to 1 week from today (skips weekends)
+          - Recalculate Dates button computes start/due from anchor + effort + dependency order
+          - Topological sort respects dependency_indices for ordering
+          - Business days only (skips weekends)
+          - Auto-triggered after enrichment if no dates present
+
+      - id: "2.5"
+        title: Dependency visibility in ticket table
+        tags: [frontend]
+        status: done
+        acceptance: |
+          - "Blocks" column shows dep badges (#1, #3, etc.)
+          - Dependencies flow through to batch submit as DependencyPair objects
+          - Issue links created in Jira show in Gantt chart
+
+  - id: agent-redesign
+    name: Clean A2A Agent Architecture
+    items:
+      - id: "3.1"
+        title: Design clean agent interfaces with explicit input schemas
+        tags: [backend, docs]
+        acceptance: |
+          - No string-matching hacks (transcript_ prefix detection)
+          - Pass mode/input_type parameter through pipeline
+          - Each agent has a well-defined A2A contract
+
+      - id: "3.2"
+        title: Docker Compose multi-service agent architecture
+        tags: [backend, config]
+        acceptance: |
+          - Each agent is its own Docker service with A2A endpoint
+          - Orchestrator calls agents over HTTP
+          - docker compose up starts everything
+
+      - id: "3.3"
+        title: A2A protocol between agents (local, no Azure dependency)
+        tags: [backend]
+        acceptance: |
+          - Agents communicate via A2A protocol
+          - Works fully local in Docker
+          - Same agents can later register in Azure AI Foundry
+
+  - id: azure-integration
+    name: Azure AI Foundry Integration
+    items:
+      - id: "4.1"
+        title: Create AI Foundry Project and register agents
+        tags: [config]
+        acceptance: |
+          - Agents registered in testsage1 project
+          - Same agent definitions used locally and in Azure
+
+      - id: "4.2"
+        title: Compare portable vs Azure-native agent approaches
+        tags: [docs]
+        acceptance: |
+          - Side-by-side comparison documented
+          - Performance, cost, and complexity compared

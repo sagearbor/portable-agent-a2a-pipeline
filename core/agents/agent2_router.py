@@ -18,26 +18,32 @@ from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
 AGENT_DEFINITION = {
     "name": "router",
     "instructions": (
-        "You are a routing agent that decides which emails should become Jira tickets. "
-        "You receive a list of pre-extracted email summaries. "
-        "Your job is to filter and enrich them.\n"
+        "You are a routing agent that decides which items should become Jira tickets. "
+        "You receive a list of pre-extracted summaries. "
+        "Your job is to classify every item as approved or rejected.\n"
         "\n"
         "Rules:\n"
-        "  - Only approve items where is_actionable is true\n"
-        "  - Reject anything that is social, administrative, or unclear\n"
+        "  - Approve items that represent concrete, actionable work (bugs, features, tasks, decisions needing follow-up)\n"
+        "  - Reject anything that is social, administrative, purely informational, or unclear\n"
         "  - For approved items, confirm or adjust the suggested_priority\n"
         "  - For approved items, confirm or improve the suggested_jira_summary\n"
-        "  - Add a field 'routing_reason' explaining in one sentence why this warrants a ticket\n"
+        "  - For each item add 'routing_reason' explaining in one sentence why it was approved or rejected\n"
         "\n"
-        "Return a JSON array of approved items only. No explanation, just the JSON."
+        "Return a JSON object with two arrays:\n"
+        "  { \"approved\": [...items to become tickets...], \"rejected\": [...items filtered out...] }\n"
+        "Each rejected item needs only: email_id, suggested_jira_summary (or summary), routing_reason.\n"
+        "No explanation outside the JSON."
     ),
 }
 
 
-def run(email_extracts: list[dict]) -> list[dict]:
+def run(email_extracts: list[dict]) -> dict:
     """
     Filter and route email extracts from Agent 1.
-    Returns only the items approved for Jira ticket creation.
+
+    Returns a dict with:
+        approved: list of items to become Jira tickets
+        rejected: list of items that were filtered out (with reasons)
     """
     print(f"\n{'='*60}")
     print(f"AGENT 2 - Router  [provider: {PROVIDER}]")
@@ -47,7 +53,7 @@ def run(email_extracts: list[dict]) -> list[dict]:
     client, model = get_client()
     print(f"[agent2] Calling LLM ({model}) to route...")
 
-    input_text = f"Here are the email extracts to evaluate:\n{json.dumps(email_extracts, indent=2)}"
+    input_text = f"Here are the extracts to evaluate:\n{json.dumps(email_extracts, indent=2)}"
 
     if PROVIDER in ("openai_responses", "azure_responses"):
         response = client.responses.create(
@@ -83,9 +89,25 @@ def run(email_extracts: list[dict]) -> list[dict]:
         stripped = stripped.rsplit("```", 1)[0].strip()
 
     print(f"[agent2] Raw LLM response (first 300 chars): {stripped[:300]}")
-    approved = json.loads(stripped)
+    parsed = json.loads(stripped)
+
+    # Handle both old format (plain array) and new format (object with approved/rejected)
+    if isinstance(parsed, list):
+        # Old format: LLM returned just the approved array
+        approved = parsed
+        rejected = []
+    else:
+        approved = parsed.get("approved", [])
+        rejected = parsed.get("rejected", [])
+
     print(f"[agent2] Approved {len(approved)} items for ticket creation")
     for item in approved:
         print(f"  -> {item.get('suggested_jira_summary', '?')}  [{item.get('suggested_priority', '?')}]")
+    if rejected:
+        print(f"[agent2] Rejected {len(rejected)} items:")
+        for item in rejected:
+            reason = item.get('routing_reason', 'no reason given')
+            summary = item.get('suggested_jira_summary', item.get('summary', '?'))
+            print(f"  x  {summary} — {reason}")
 
-    return approved
+    return {"approved": approved, "rejected": rejected}

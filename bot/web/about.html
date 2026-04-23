@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SageJiraBot — About &amp; How to Use</title>
+  <style>
+    :root {
+      --accent:    #4f8ef7;
+      --text:      #2d3142;
+      --muted:     #6a6f82;
+      --bg:        #f4f6fb;
+      --card:      #ffffff;
+      --border:    #dde1eb;
+      --code-bg:   #f1f3f8;
+      --warn-bg:   #fff7e6;
+      --warn-br:   #e8c27a;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      font-size: 15px;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .wrap {
+      max-width: 880px;
+      margin: 0 auto;
+      padding: 40px 24px 80px;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 4px;
+    }
+    h1 + .subtitle {
+      color: var(--muted);
+      margin-bottom: 28px;
+      font-size: 15px;
+    }
+    h2 {
+      font-size: 20px;
+      margin-top: 32px;
+      margin-bottom: 10px;
+      color: var(--accent);
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 4px;
+    }
+    h3 {
+      font-size: 16px;
+      margin-top: 22px;
+      margin-bottom: 8px;
+    }
+    p { margin-bottom: 12px; }
+    ul, ol {
+      margin-left: 24px;
+      margin-bottom: 12px;
+    }
+    li { margin-bottom: 5px; }
+    code {
+      background: var(--code-bg);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: 'Menlo', 'Consolas', monospace;
+      font-size: 13px;
+    }
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 12px;
+      overflow-x: auto;
+      font-family: 'Menlo', 'Consolas', monospace;
+      font-size: 13px;
+      margin-bottom: 14px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 20px 24px;
+      margin-bottom: 18px;
+    }
+    .note {
+      background: var(--warn-bg);
+      border: 1px solid var(--warn-br);
+      border-left: 4px solid var(--warn-br);
+      padding: 10px 14px;
+      margin: 14px 0;
+      border-radius: 4px;
+    }
+    .note b { display: block; margin-bottom: 3px; }
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 10px 0 18px;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--border);
+      padding: 7px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th { background: #eef1f7; }
+    .muted { color: var(--muted); }
+    .kbd {
+      font-family: 'Menlo', monospace;
+      background: #eef1f7;
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-size: 12px;
+    }
+    a.back {
+      display: inline-block;
+      margin-bottom: 20px;
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 13px;
+    }
+    a.back:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <a class="back" href="/">&larr; Back to the app</a>
+
+    <h1>SageJiraBot &mdash; About &amp; How to Use</h1>
+    <p class="subtitle">
+      Turn a meeting transcript into a batch of reviewed Jira tickets in about 60 seconds.
+    </p>
+
+    <div class="card">
+      <h3 style="margin-top:0;">What it does</h3>
+      <p>
+        SageJiraBot runs a multi-agent pipeline that reads a meeting transcript, extracts
+        the action items, filters out chatter, writes clean Jira-style descriptions, and
+        presents the result as a reviewable draft table before anything is sent to Jira.
+        You edit, uncheck, or adjust any row; then one click creates the whole batch.
+      </p>
+    </div>
+
+    <h2>Getting Started</h2>
+
+    <ol>
+      <li>
+        <b>Sign in to Jira (per-user OAuth).</b> In the left sidebar under
+        &ldquo;Step 1 &mdash; Connect to Jira&rdquo; there&rsquo;s a
+        <em>Jira Sign-In (per-user)</em> card with a blue button. Click it. You&rsquo;ll be
+        redirected to Atlassian, asked to approve the scopes, then sent back signed in.
+        Your tickets will be created as <b>you</b>, not a shared service account.
+      </li>
+      <li>
+        <b>Pick a Jira project.</b> Once signed in the project dropdown populates
+        automatically. By default it shows projects you&rsquo;ve recently viewed
+        (typically 10&ndash;20). Tick <em>&ldquo;Show all projects I can write to&rdquo;</em>
+        if the one you want isn&rsquo;t listed.
+      </li>
+      <li>
+        <b>Provide a transcript</b> in Step 2. Drag in a <code>.txt</code>,
+        <code>.vtt</code>, or <code>.srt</code> file, or paste text directly into the
+        textarea. Teams recap transcripts and Webex <code>.txt</code> exports work as-is.
+      </li>
+      <li>
+        <b>Click &ldquo;Analyze Transcript.&rdquo;</b> The three-agent pipeline runs
+        in the background; in about 30&ndash;60 seconds the draft table appears in Step 3.
+      </li>
+      <li>
+        <b>Review, edit, then submit.</b> Uncheck rows to drop them; edit any field
+        inline; use the bulk-apply bar to set epic/sprint/assignee on many rows at once;
+        click &ldquo;Create Selected Tickets.&rdquo;
+      </li>
+    </ol>
+
+
+    <h2>How the Pipeline Works (under the hood)</h2>
+    <p>
+      You don&rsquo;t need to know this to use the app, but it explains why some tickets
+      are dropped and what the AI is looking for.
+    </p>
+    <ul>
+      <li>
+        <b>Agent 1 (extractor)</b> reads the transcript and emits a structured list of
+        candidate tickets: summary, description, effort hint, priority hint, any names
+        mentioned near each task.
+      </li>
+      <li>
+        <b>Agent 2 (router)</b> filters to <em>actionable</em> items. Things that are
+        just discussion, background, or rhetorical (&ldquo;we should think about X
+        someday&rdquo;) get filtered out. What Agent 2 rejects is shown in the
+        collapsible <em>&ldquo;N items filtered out by Agent 2&rdquo;</em> panel above
+        the draft table &mdash; expand it to sanity-check the agent isn&rsquo;t dropping
+        things you care about.
+      </li>
+      <li>
+        <b>Agent 3 (writer)</b> rewrites each approved item into a Jira-ready summary and
+        description with proper acceptance-criteria shape.
+      </li>
+    </ul>
+
+
+    <h2>Writing a Transcript the AI Can Work With</h2>
+    <p>
+      These aren&rsquo;t magic codewords &mdash; the LLM parses natural language. But
+      clear language produces clean tickets, and sloppy language produces sloppy tickets.
+      What follows are habits that noticeably improve extraction quality.
+    </p>
+
+    <h3>Make action items explicit</h3>
+    <ul>
+      <li>Say <em>&ldquo;Action item: X will do Y by Z&rdquo;</em> or equivalent.</li>
+      <li>Use verbs at the start of a sentence (&ldquo;Refactor the login flow&rdquo;, &ldquo;Add a CSV export&rdquo;) rather than passive description (&ldquo;we were thinking about maybe looking into refactoring&rdquo;).</li>
+      <li>Separate sentences with periods. Run-on transcription lumps multiple tasks into one ticket.</li>
+    </ul>
+
+    <h3>Mention the assignee near the task</h3>
+    <ul>
+      <li><em>&ldquo;Joe will handle the migration script.&rdquo;</em> &rarr; Agent 1 records Joe&rsquo;s name near that task.</li>
+      <li><em>&ldquo;Joe. The migration script needs work. Someone should do it.&rdquo;</em> &rarr; The name isn&rsquo;t linked; assignee will be empty.</li>
+    </ul>
+    <div class="note">
+      <b>Important limitation today:</b>
+      The name Agent 1 captures is a <em>suggestion</em>, not an automatic assignment. The
+      generated draft ticket will not have the assignee field filled &mdash; you set it in
+      Step 3 via the Assignee dropdown per row, or via the bulk-apply bar. Automatic
+      assignee-resolution from names is on the <a href="#planned">Planned Features</a> list.
+    </div>
+
+    <h3>State deadlines and priority explicitly</h3>
+    <ul>
+      <li><em>&ldquo;by next Friday&rdquo;</em>, <em>&ldquo;in the next sprint&rdquo;</em>, <em>&ldquo;before the Aug release&rdquo;</em> give Agent 1 something to base the start/due date on.</li>
+      <li><em>&ldquo;This is a blocker&rdquo;</em>, <em>&ldquo;production is down&rdquo;</em>, <em>&ldquo;critical for the demo&rdquo;</em> → priority gets bumped up.</li>
+      <li>Without those signals the default priority is <em>Medium</em> and dates are estimated from effort + dependencies.</li>
+    </ul>
+
+    <h3>One topic per paragraph</h3>
+    <p>
+      Meetings that wander (&ldquo;oh and while we&rsquo;re talking about that, also
+      the other thing, and also Jim mentioned&hellip;&rdquo;) produce overlapping tickets.
+      When possible, segment the transcript by topic &mdash; either naturally in the
+      meeting or with a short edit pass before uploading.
+    </p>
+
+
+    <h2>Step 3 &mdash; The Draft-Tickets Screen</h2>
+
+    <h3>Per-row editing</h3>
+    <p>
+      Every column in the draft table is editable: Summary, Epic, Effort, Priority,
+      Start, Due, Blocks, Sprint, Fix Version, Labels, Assignee, Description. Click
+      a cell and type. Changes are held in the browser until you click
+      <em>Create Selected Tickets</em>.
+    </p>
+    <p>
+      Uncheck the leftmost checkbox to drop a row from the batch. The <span class="kbd">Select all</span>
+      checkbox in the header toggles every row.
+    </p>
+
+    <h3>The anchor-date bar (scheduling)</h3>
+    <p>
+      Above the table: <b>Anchor Date (project start)</b> + <em>Recalculate Dates</em>
+      button. This sets the first ticket&rsquo;s start date; everything else is computed
+      forward from effort estimates and dependency chains. Change the anchor to slide the
+      whole schedule forward or back without editing each row individually.
+    </p>
+
+    <h3>The bulk-apply bar</h3>
+    <p>
+      Above the table: <b>Apply to all checked rows</b>. Use this after analysis to
+      set a field across many rows in one click. Fields supported:
+    </p>
+    <table>
+      <thead>
+        <tr><th>Field</th><th>What it does</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><b>Epic</b></td>
+          <td>
+            Pick an existing epic from the project, or type a new name into the
+            &ldquo;New epic name...&rdquo; box that appears &mdash; a new Epic ticket is
+            created first and all checked rows land under it.
+          </td>
+        </tr>
+        <tr>
+          <td><b>Sprint</b></td>
+          <td>Assign every checked row to an active or upcoming sprint (Scrum boards only; Kanban boards show nothing here).</td>
+        </tr>
+        <tr>
+          <td><b>Fix Version</b></td>
+          <td>Mark every checked row for a specific release version.</td>
+        </tr>
+        <tr>
+          <td><b>Assignee</b></td>
+          <td>Assign every checked row to one person. Dropdown is populated with actual project role members (not the full Atlassian org).</td>
+        </tr>
+        <tr>
+          <td><b>Priority</b></td>
+          <td>Force Critical / High / Medium / Low on every checked row.</td>
+        </tr>
+        <tr>
+          <td><b>Start Date / Due Date</b></td>
+          <td>Set the same start or due date across all checked rows (useful when a group of tasks is bundled in one sprint).</td>
+        </tr>
+      </tbody>
+    </table>
+    <p>
+      Workflow: uncheck rows you don&rsquo;t want affected &rarr; pick values in the
+      bulk bar &rarr; click <em>Apply</em>. You can apply the bar multiple times in
+      sequence (e.g. set Epic for all, then check a subset and set Assignee).
+    </p>
+
+    <h3>Dependencies and &ldquo;Blocks&rdquo;</h3>
+    <p>
+      Tickets that depend on other tickets from the same batch show up in the
+      <em>Blocks</em> column. A ticket that blocks another affects the auto-computed
+      dates (scheduling respects the chain). When created, these become real Jira
+      &ldquo;blocks&rdquo; links between the issues.
+    </p>
+
+    <h3>Default labels on every created ticket</h3>
+    <ul>
+      <li><code>sageJiraBot</code> &mdash; identifies tickets created by this tool, useful for later filtering in JQL.</li>
+      <li><code>&lt;batch-timestamp&gt;</code> &mdash; a timestamp like <code>20260422-2158</code> groups all tickets from one submission together. Run a JQL like <code>labels = "20260422-2158"</code> to find (or bulk-delete) just that batch.</li>
+    </ul>
+    <p>
+      Add your own labels via the <em>Labels</em> column on each row. These merge with
+      the two defaults above; the defaults cannot be removed.
+    </p>
+
+
+    <h2>Who Tickets Are Created As</h2>
+    <p>
+      If you signed in via the <em>Jira Sign-In (per-user)</em> button: every ticket&rsquo;s
+      Reporter is <b>you</b>. Audit history is accurate, team members can see who filed
+      what, and notification rules in Jira trigger based on your identity.
+    </p>
+    <p>
+      If you didn&rsquo;t sign in (rare; the UI now requires it): tickets are created by
+      the service-account API token, which attributes everything to a single shared
+      identity. Not ideal for teamwork, but fine for automated pipelines.
+    </p>
+
+
+    <h2 id="planned">Planned Features (Not Yet Available)</h2>
+    <p>
+      Features that are designed but not yet wired up. Listed here for transparency;
+      do not rely on them in a live demo.
+    </p>
+    <ul>
+      <li>
+        <b>Natural-language directives during the meeting.</b> The idea: phrases like
+        <em>&ldquo;assign all of these to Joe&rdquo;</em>, <em>&ldquo;make this a
+        blocker&rdquo;</em>, or <em>&ldquo;skip that one&rdquo;</em> would be picked up
+        by Agent 2 and applied to the drafts before you see them. Today the router
+        ignores imperatives like this &mdash; you set assignees and priorities via the
+        bulk-apply bar in Step 3. (Roadmap: extend <code>core/agents/agent2_router.py</code>
+        with a second pass that looks for directive sentences near each candidate ticket.)
+      </li>
+      <li>
+        <b>Incoming email ingestion.</b> Watching the DCRI shared error mailbox and
+        auto-running the pipeline on new messages. Blocked on a Microsoft Graph Azure AD
+        app registration (DCRI IT ticket DIS-3565, submitted 2026-04-22).
+      </li>
+      <li>
+        <b>Separate &ldquo;AI estimate&rdquo; field in Jira.</b> A Jira custom field
+        that stores the AI&rsquo;s original hour estimate alongside the human&rsquo;s
+        edited one, for post-hoc accuracy analysis. Blocked on Jira admin creating the
+        field (DCRI IT ticket DIS-3564, submitted 2026-04-22).
+      </li>
+      <li>
+        <b>Live card-based flow in Teams.</b> A future mode where SageJiraBot posts
+        Adaptive Cards in the meeting chat as action items are detected, allowing
+        approvals in real time without leaving Teams. Blocked on Azure Bot Service
+        registration (IT pending).
+      </li>
+    </ul>
+
+
+    <h2>Troubleshooting Quick Reference</h2>
+    <table>
+      <thead>
+        <tr><th>Symptom</th><th>Likely cause / fix</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>&ldquo;Sign in to Jira&rdquo; opens a new tab showing
+          <em>&ldquo;couldn&rsquo;t identify the app&rdquo;</em></td>
+          <td>Client ID misconfiguration. Ask the server operator to verify
+          <code>ATLASSIAN_OAUTH_CLIENT_ID</code> matches the value on
+          <code>developer.atlassian.com</code>.</td>
+        </tr>
+        <tr>
+          <td>Signed in, but the project dropdown shows all ~500 projects</td>
+          <td>Duke&rsquo;s Jira grants Create permission broadly. The default filter
+          (&ldquo;recently viewed&rdquo;) needs some Jira activity from your account to
+          populate; if it has none, the toggle shows all writable. Use Jira normally for
+          a few days and the list narrows.</td>
+        </tr>
+        <tr>
+          <td>Analyze fails / times out</td>
+          <td>Usually AI Foundry is unreachable (VPN dropped). Test with
+          <code>curl -I https://ai-foundry-dcri-sage.cognitiveservices.azure.com/</code>
+          from the server.</td>
+        </tr>
+        <tr>
+          <td>Ticket creation succeeds but epic link is missing</td>
+          <td>The Epic chosen in the bulk bar might have been archived or renamed. Pick
+          from the dropdown (don&rsquo;t type a free-form key).</td>
+        </tr>
+        <tr>
+          <td>I want to roll back an entire batch I just created</td>
+          <td>In Jira, run JQL <code>labels = "&lt;batch-timestamp&gt;"</code> and
+          bulk-delete. The batch timestamp is shown in the header of Step 3 after
+          submission.</td>
+        </tr>
+      </tbody>
+    </table>
+
+
+    <h2>Feedback</h2>
+    <p>
+      Found a bug, have a UX wish, or want a new feature? Email
+      <a href="mailto:sage.arbor@duke.edu">sage.arbor@duke.edu</a> or open a ticket in
+      the DCRI Jira project <code>ST</code> (the bot&rsquo;s tracking board). Tickets
+      created via the bot about the bot close the loop nicely.
+    </p>
+
+    <p class="muted" style="margin-top:40px; font-size:12px; text-align:center;">
+      Version info and health: <a href="/health">/health</a>
+    </p>
+
+  </div>
+</body>
+</html>

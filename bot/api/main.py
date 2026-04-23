@@ -20,12 +20,14 @@ Phase 2 will add:
 """
 
 import os
+import secrets
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.sessions import SessionMiddleware
 
 # Load .env before importing anything that reads env vars
 load_dotenv()
@@ -34,9 +36,11 @@ from core.config.settings import PROVIDER
 from bot.api.routes.transcript import router as transcript_router
 from bot.api.routes.jira_projects import router as jira_projects_router
 from bot.api.routes.auth import router as auth_router
+from bot.api.routes.auth_jira import router as auth_jira_router
 from bot.api.routes.demo import router as demo_router
 from bot.api.routes.jira_search import router as jira_search_router
 from bot.api.routes.jira_context_api import router as jira_context_api_router
+from bot.api.routes.extract import router as extract_router
 
 
 # ---------------------------------------------------------------------------
@@ -75,12 +79,50 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# ---------------------------------------------------------------------------
+# Session middleware — required for Atlassian OAuth 3LO.
+# Signs the session cookie with SESSION_SECRET; if unset, falls back to a
+# per-process random value.  A stable value across restarts is only needed
+# once per-user OAuth is live — the ephemeral fallback works for single-worker
+# local dev.  Use a long random string in production.
+# Cookie: HttpOnly (always), Secure (only when HTTPS), SameSite=lax.
+# ---------------------------------------------------------------------------
+_session_secret = (os.environ.get("SESSION_SECRET") or "").strip()
+if not _session_secret or _session_secret == "CHANGE_ME":
+    _session_secret = secrets.token_urlsafe(48)  # ephemeral — invalidates sessions on restart
+    print("[SessionMiddleware] Using ephemeral session secret (set SESSION_SECRET in .env for persistence).")
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=_session_secret,
+    session_cookie="sagejirabot_session",
+    https_only=False,   # flipped to True via env below if served over HTTPS
+    same_site="lax",
+    max_age=60 * 60 * 24 * 7,  # 1 week
+)
+if (os.environ.get("SESSION_COOKIE_SECURE") or "").strip().lower() in ("1", "true", "yes"):
+    # Rebuild with https_only=True when the server is behind HTTPS.
+    # We re-add rather than mutate because Starlette stores the setting at
+    # middleware-install time; keeping this explicit avoids surprises.
+    app.user_middleware = [m for m in app.user_middleware if m.cls is not SessionMiddleware]
+    app.middleware_stack = None  # force rebuild on next request
+    app.add_middleware(
+        SessionMiddleware,
+        secret_key=_session_secret,
+        session_cookie="sagejirabot_session",
+        https_only=True,
+        same_site="lax",
+        max_age=60 * 60 * 24 * 7,
+    )
+
 # Mount API routes at /api/v1
 app.include_router(transcript_router,    prefix="/api/v1")
 app.include_router(jira_projects_router, prefix="/api/v1")
 app.include_router(demo_router,          prefix="/api/v1")
 app.include_router(jira_search_router,       prefix="/api/v1")
 app.include_router(jira_context_api_router,  prefix="/api/v1")
+app.include_router(auth_jira_router,         prefix="/api/v1")
+app.include_router(extract_router,           prefix="/api/v1")
 
 # Mount SSO auth routes at /api/auth
 app.include_router(auth_router, prefix="/api/auth")
@@ -106,7 +148,7 @@ async def health() -> JSONResponse:
         status_code=200,
         content={
             "status": "ok",
-            "version": "0.3.0",
+            "version": "0.6.8",
             "provider": PROVIDER,
             "jira_project": os.environ.get("JIRA_PROJECT_KEY", "ST"),
         }
@@ -117,7 +159,7 @@ async def health() -> JSONResponse:
 async def ping():
     """Cache-proof version check — new endpoint NGINX has never cached."""
     import datetime
-    return {"v": "0.3.0", "t": datetime.datetime.now().isoformat()}
+    return {"v": "0.6.8", "t": datetime.datetime.now().isoformat()}
 
 
 # ---------------------------------------------------------------------------

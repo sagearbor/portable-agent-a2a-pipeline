@@ -14,7 +14,7 @@ from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
 from core.clients.client import get_client, token_limit_kwarg
-from core.config.settings import PROVIDER, TEMPERATURE
+from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
 
 load_dotenv()
 
@@ -325,8 +325,13 @@ def enrich_draft_tickets(
         + version_context
     )
 
-    # Use generous token limit — enrichment output can be large
-    enrichment_max_tokens = 8192
+    # Use generous token limit — enrichment output can be large.
+    # With ~30 tickets × ~10 fields each, output easily reaches 15-20k tokens.
+    # 8192 was causing silent truncation → JSON parse failure → falling back
+    # to un-enriched tickets with no effort, dates, or dependencies.
+    enrichment_max_tokens = MAX_TOKENS  # uses the global generous default (16384+)
+
+    print(f"[jira_context] Enriching {len(draft_tickets)} tickets (max_tokens={enrichment_max_tokens})...")
 
     if PROVIDER in ("openai_responses", "azure_responses"):
         response = client.responses.create(
@@ -347,6 +352,9 @@ def enrich_draft_tickets(
             **token_limit_kwarg(model, enrichment_max_tokens),
         )
         raw = response.choices[0].message.content
+        finish = response.choices[0].finish_reason
+        if finish == "length":
+            print(f"[jira_context] WARNING: enrichment response truncated (finish_reason=length)!")
 
     if not raw:
         print("[jira_context] WARNING: LLM returned empty enrichment response")
@@ -358,7 +366,21 @@ def enrich_draft_tickets(
         stripped = stripped.split("\n", 1)[-1]
         stripped = stripped.rsplit("```", 1)[0].strip()
 
-    enriched = json.loads(stripped)
+    try:
+        enriched = json.loads(stripped)
+    except json.JSONDecodeError as e:
+        print(f"[jira_context] ERROR: Failed to parse enrichment JSON: {e}")
+        print(f"[jira_context] Raw response (last 200 chars): ...{stripped[-200:]}")
+        return draft_tickets
+
+    print(f"[jira_context] Enriched {len(enriched)} tickets successfully")
+    # Log a sample to verify fields are populated
+    if enriched:
+        sample = enriched[0]
+        print(f"[jira_context] Sample ticket[0]: effort={sample.get('effort')}, "
+              f"start_date={sample.get('start_date')}, due_date={sample.get('due_date')}, "
+              f"deps={sample.get('dependency_indices')}")
+
     return enriched
 
 

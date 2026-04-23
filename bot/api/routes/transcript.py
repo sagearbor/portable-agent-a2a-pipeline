@@ -17,8 +17,10 @@ import time
 import threading
 import uuid
 from datetime import datetime, timezone
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+from bot.api.routes.auth_jira import get_oauth_session
 
 from core.config.settings import PROVIDER
 from core.agents import agent1_email, agent2_router, agent3_jira
@@ -66,6 +68,7 @@ def _run_pipeline_job(job_id: str, req_data: dict):
                 "dry_run": dry_run,
                 "elapsed_seconds": round(time.time() - start, 2),
                 "tickets": [], "error_message": None,
+                "rejected": [],
             }
             return
 
@@ -75,7 +78,9 @@ def _run_pipeline_job(job_id: str, req_data: dict):
 
         # Step 3: Agent 2
         job["stage"] = "agent2"
-        approved_items = agent2_router.run(email_extracts=email_extracts)
+        router_result = agent2_router.run(email_extracts=email_extracts)
+        approved_items = router_result["approved"]
+        rejected_items = router_result["rejected"]
 
         # Step 4: Agent 3
         job["stage"] = "agent3"
@@ -110,6 +115,13 @@ def _run_pipeline_job(job_id: str, req_data: dict):
             "dry_run": dry_run,
             "elapsed_seconds": round(time.time() - start, 2),
             "tickets": tickets, "error_message": None,
+            "rejected": [
+                {
+                    "summary": r.get("suggested_jira_summary", r.get("summary", "?")),
+                    "reason": r.get("routing_reason", ""),
+                }
+                for r in rejected_items
+            ],
         }
 
     except Exception as exc:
@@ -304,19 +316,36 @@ class SubmitTicketRequest(BaseModel):
 
 
 @router.post("/submit-ticket", response_model=TicketResult)
-async def submit_ticket(req: SubmitTicketRequest) -> TicketResult:
+async def submit_ticket(req: SubmitTicketRequest, request: Request) -> TicketResult:
     """
     Create a single Jira ticket from pre-authored content.
 
     Called by the web UI for each checked ticket row after the user
     finishes editing.  No LLM involved — the summary and description
     are taken verbatim from the request.
+
+    Auth preference:
+      1. OAuth session bearer token (ticket reporter = signed-in user)
+      2. Caller-supplied Basic auth in the request body
+      3. JIRA_EMAIL / JIRA_API_TOKEN service-account env vars
     """
     from core.tools.jira_tool import create_ticket as _create_ticket, JiraCredentials
 
-    # Build credentials object (or None to fall back to env vars)
+    # Build credentials object (or None to fall back to env vars).
     credentials: JiraCredentials | None = None
-    if req.jira_base_url or req.jira_email or req.jira_api_token:
+
+    sess = get_oauth_session(request)
+    if sess and sess.get("access_token") and sess.get("cloud_id"):
+        # OAuth mode — ticket will be attributed to the signed-in user
+        credentials = JiraCredentials(
+            base_url=sess.get("site_url", ""),
+            email="",
+            api_token="",
+            project_key=req.project_key,
+            access_token=sess["access_token"],
+            cloud_id=sess["cloud_id"],
+        )
+    elif req.jira_base_url or req.jira_email or req.jira_api_token:
         credentials = JiraCredentials(
             base_url=req.jira_base_url    or os.environ.get("JIRA_BASE_URL",   ""),
             email=req.jira_email          or os.environ.get("JIRA_EMAIL",      ""),
@@ -490,7 +519,7 @@ class BatchSubmitResponse(BaseModel):
 
 
 @router.post("/submit-tickets-batch", response_model=BatchSubmitResponse)
-async def submit_tickets_batch(req: BatchSubmitRequest) -> BatchSubmitResponse:
+async def submit_tickets_batch(req: BatchSubmitRequest, request: Request) -> BatchSubmitResponse:
     """
     Create tickets in batch with epic creation and issue linking.
 
@@ -499,6 +528,10 @@ async def submit_tickets_batch(req: BatchSubmitRequest) -> BatchSubmitResponse:
     2. Create any new epics (epic_key starting with "new:")
     3. Create Stories under their respective epics
     4. Create issue links for dependencies
+
+    Auth: when a Jira OAuth session is active, all tickets are created
+    *as* the signed-in user (reporter = their Atlassian account).  Falls
+    back to the service-account JIRA_EMAIL/JIRA_API_TOKEN otherwise.
     """
     from core.tools.jira_tool import (
         create_ticket as _create_ticket,
@@ -512,6 +545,20 @@ async def submit_tickets_batch(req: BatchSubmitRequest) -> BatchSubmitResponse:
     # Set project key
     original_key = os.environ.get("JIRA_PROJECT_KEY", "ST")
     os.environ["JIRA_PROJECT_KEY"] = req.project_key
+
+    # Build OAuth-derived credentials if a user session is active, so every
+    # _create_ticket() call below is attributed to the signed-in user.
+    oauth_creds: JiraCredentials | None = None
+    sess = get_oauth_session(request)
+    if sess and sess.get("access_token") and sess.get("cloud_id"):
+        oauth_creds = JiraCredentials(
+            base_url=sess.get("site_url", ""),
+            email="",
+            api_token="",
+            project_key=req.project_key,
+            access_token=sess["access_token"],
+            cloud_id=sess["cloud_id"],
+        )
 
     results: list[BatchTicketResult] = []
     epics_created: list[dict] = []
@@ -536,6 +583,7 @@ async def submit_tickets_batch(req: BatchSubmitRequest) -> BatchSubmitResponse:
                     issue_type="Epic",
                     priority="Medium",
                     labels=base_labels,
+                    credentials=oauth_creds,
                 )
                 new_epic_map[epic_ref] = result["ticket_id"]
                 epics_created.append({
@@ -578,6 +626,7 @@ async def submit_tickets_batch(req: BatchSubmitRequest) -> BatchSubmitResponse:
                     due_date=ticket.due_date,
                     original_estimate=ticket.effort,
                     assignee_account_id=ticket.assignee_account_id,
+                    credentials=oauth_creds,
                 )
                 index_to_key[ticket.index] = result["ticket_id"]
                 results.append(BatchTicketResult(
