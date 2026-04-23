@@ -102,16 +102,32 @@ def run(email_extracts: list[dict]) -> dict:
         approved = parsed.get("approved", [])
         rejected = parsed.get("rejected", [])
 
-    # Deterministic carry-forward: if the router LLM dropped suggested_assignee,
-    # restore it from the original extract keyed by email_id. This is cheaper
-    # and more reliable than asking the LLM to preserve extra fields.
+    # Deterministic carry-forward: if the router LLM dropped suggested_assignee
+    # (or the new rationale fields), restore them from the original extract
+    # keyed by email_id. Cheaper and more reliable than asking the LLM to
+    # preserve extra fields.
+    _CARRY_FIELDS = (
+        "suggested_assignee",
+        "assignee_category",
+        "assignee_evidence",
+        "assignee_rationale",
+        "assignee_confidence",
+    )
     extract_by_id = {e.get("email_id"): e for e in email_extracts if e.get("email_id")}
     for item in approved:
         eid = item.get("email_id")
-        if eid and not item.get("suggested_assignee"):
-            src = extract_by_id.get(eid)
-            if src and src.get("suggested_assignee"):
-                item["suggested_assignee"] = src["suggested_assignee"]
+        if not eid:
+            continue
+        src = extract_by_id.get(eid)
+        if not src:
+            continue
+        for field in _CARRY_FIELDS:
+            # Treat "" and None as missing for text fields; 0/0.0 as missing
+            # for confidence so a dropped field falls back to source value.
+            current = item.get(field)
+            if current in (None, ""):
+                if field in src and src[field] not in (None, ""):
+                    item[field] = src[field]
 
     print(f"[agent2] Approved {len(approved)} items for ticket creation")
     for item in approved:

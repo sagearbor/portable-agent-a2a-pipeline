@@ -1847,7 +1847,14 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       summary:     t.summary,
       priority:    t.priority || 'Medium',
       description: t.description || '',
-      suggested_assignee: t.suggested_assignee || null,
+      suggested_assignee:  t.suggested_assignee || null,
+      // Assignee rationale audit trail (optional; may be null if the
+      // LLM dropped the field). Rendered as a muted line + tooltip
+      // under the Assignee dropdown for each draft.
+      assignee_category:   t.assignee_category   || null,
+      assignee_evidence:   t.assignee_evidence   || '',
+      assignee_rationale:  t.assignee_rationale  || '',
+      assignee_confidence: (typeof t.assignee_confidence === 'number') ? t.assignee_confidence : null,
       checked:     true,
       deleted:     false,
     }));
@@ -2034,6 +2041,7 @@ function renderTickets() {
           ).join('')}
         </select>
         ${ticket.suggested_assignee && !ticket.suggested_assignee_id ? `<span class="text-muted" style="font-size:10px; display:block;">Suggested: ${escHtml(ticket.suggested_assignee)}</span>` : ''}
+        ${ticket.suggested_assignee && (ticket.assignee_category || typeof ticket.assignee_confidence === 'number') ? `<span class="text-muted" style="font-size:10px; display:block;" title="${escHtml(ticket.assignee_rationale || '')}${ticket.assignee_evidence ? ' — evidence: ' + escHtml(ticket.assignee_evidence) : ''}">Why: ${escHtml(ticket.assignee_category || 'unknown')}${typeof ticket.assignee_confidence === 'number' ? ' &middot; ' + Math.round(ticket.assignee_confidence * 100) + '%' : ''}</span>` : ''}
       </td>
       <td class="col-desc">
         <textarea class="desc-input" data-idx="${idx}" rows="3">${escHtml(ticket.description)}</textarea>

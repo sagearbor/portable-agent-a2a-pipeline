@@ -112,16 +112,29 @@ def run(
 
     tickets_to_create = json.loads(stripped)
 
-    # Deterministic carry-forward of suggested_assignee from approved_items
-    # (Agent 2 output) — the description-writing LLM only returns
-    # summary/description/priority, so the assignee name would otherwise be lost.
+    # Deterministic carry-forward from approved_items (Agent 2 output) —
+    # the description-writing LLM only returns summary/description/priority,
+    # so the assignee name + rationale fields would otherwise be lost.
+    _CARRY_FIELDS = (
+        "suggested_assignee",
+        "assignee_category",
+        "assignee_evidence",
+        "assignee_rationale",
+        "assignee_confidence",
+    )
     approved_by_id = {a.get("email_id"): a for a in approved_items if a.get("email_id")}
     for ticket in tickets_to_create:
         eid = ticket.get("email_id")
-        if eid and not ticket.get("suggested_assignee"):
-            src = approved_by_id.get(eid)
-            if src and src.get("suggested_assignee"):
-                ticket["suggested_assignee"] = src["suggested_assignee"]
+        if not eid:
+            continue
+        src = approved_by_id.get(eid)
+        if not src:
+            continue
+        for field in _CARRY_FIELDS:
+            current = ticket.get(field)
+            if current in (None, ""):
+                if field in src and src[field] not in (None, ""):
+                    ticket[field] = src[field]
 
     # Call the Jira tool for each ticket (or skip if dry_run)
     results = []
@@ -135,7 +148,11 @@ def run(
                 "summary":   ticket["summary"],
                 "priority":  ticket.get("priority", "Medium"),
                 "description": ticket.get("description", ""),
-                "suggested_assignee": ticket.get("suggested_assignee"),
+                "suggested_assignee":  ticket.get("suggested_assignee"),
+                "assignee_category":   ticket.get("assignee_category"),
+                "assignee_evidence":   ticket.get("assignee_evidence"),
+                "assignee_rationale":  ticket.get("assignee_rationale"),
+                "assignee_confidence": ticket.get("assignee_confidence"),
             }
             result["email_id"] = ticket.get("email_id", "")
             results.append(result)
@@ -159,7 +176,11 @@ def run(
             )
             result["email_id"] = ticket.get("email_id", "")
             result["description"] = ticket.get("description", "")
-            result["suggested_assignee"] = ticket.get("suggested_assignee")
+            result["suggested_assignee"]  = ticket.get("suggested_assignee")
+            result["assignee_category"]   = ticket.get("assignee_category")
+            result["assignee_evidence"]   = ticket.get("assignee_evidence")
+            result["assignee_rationale"]  = ticket.get("assignee_rationale")
+            result["assignee_confidence"] = ticket.get("assignee_confidence")
             results.append(result)
             print(f"[agent3] Created {result['ticket_id']}: {result['url']}")
 

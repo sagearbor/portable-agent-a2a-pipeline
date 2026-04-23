@@ -386,16 +386,27 @@ def enrich_draft_tickets(
         print(f"[jira_context] Raw response (last 200 chars): ...{stripped[-200:]}")
         return draft_tickets
 
-    # Deterministic carry-forward: re-assert suggested_assignee from input
-    # whenever the enrichment LLM forgot to echo it. Match by ticket_id first,
-    # then fall back to array position.
+    # Deterministic carry-forward: re-assert suggested_assignee and the
+    # assignee rationale fields from the input whenever the enrichment LLM
+    # forgot to echo them. Match by ticket_id first, then fall back to array
+    # position.
+    _CARRY_FIELDS = (
+        "suggested_assignee",
+        "assignee_category",
+        "assignee_evidence",
+        "assignee_rationale",
+        "assignee_confidence",
+    )
     input_by_id = {t.get("ticket_id"): t for t in draft_tickets if t.get("ticket_id")}
     for idx, t in enumerate(enriched):
-        if t.get("suggested_assignee"):
-            continue
         src = input_by_id.get(t.get("ticket_id")) or (draft_tickets[idx] if idx < len(draft_tickets) else {})
-        if src and src.get("suggested_assignee"):
-            t["suggested_assignee"] = src["suggested_assignee"]
+        if not src:
+            continue
+        for field in _CARRY_FIELDS:
+            current = t.get(field)
+            if current in (None, ""):
+                if field in src and src[field] not in (None, ""):
+                    t[field] = src[field]
 
     print(f"[jira_context] Enriched {len(enriched)} tickets successfully")
     # Log a sample to verify fields are populated
