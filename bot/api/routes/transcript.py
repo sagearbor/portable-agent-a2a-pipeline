@@ -106,7 +106,14 @@ def _run_pipeline_job(job_id: str, req_data: dict):
                 "summary": t["summary"],
                 "priority": t.get("priority", "Medium"),
                 "description": t.get("description", ""),
-                "suggested_assignee": t.get("suggested_assignee"),
+                "suggested_assignee":  t.get("suggested_assignee"),
+                # Assignee rationale audit trail — set by Agent 1 (or the
+                # meeting_directives applier for 'directive_bulk'). Optional;
+                # may be null when the LLM dropped them upstream.
+                "assignee_category":   t.get("assignee_category"),
+                "assignee_evidence":   t.get("assignee_evidence"),
+                "assignee_rationale":  t.get("assignee_rationale"),
+                "assignee_confidence": t.get("assignee_confidence"),
             }
             for t in raw_tickets
         ]

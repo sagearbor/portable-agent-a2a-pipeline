@@ -91,6 +91,21 @@ TRANSCRIPT_INSTRUCTIONS = (
     "                        * 'I'll take that' / 'I can do it' / 'I've got it' -> use the speaker's own name\n"
     "                      Return JUST the name (e.g. 'Ethan' or 'Sage Arbor') — not a sentence.\n"
     "                      Do NOT invent names. If no name is stated, return null.\n"
+    "  assignee_category: one of these enum values (pick exactly one):\n"
+    "      * 'directive_explicit'      — speaker explicitly said 'assign <name> to this'\n"
+    "      * 'speaker_volunteered'     — the speaker said 'I'll take it' / 'I can do that'\n"
+    "      * 'assigned_by_name'        — another speaker said '<name> will do X' or '<name>, can you handle X'\n"
+    "      * 'inferred_from_context'   — no direct assignment, but ownership is clear from context\n"
+    "      * 'unassignable'            — no name was stated and none can be inferred (suggested_assignee MUST be null)\n"
+    "      (The 'directive_bulk' value is reserved for the meeting_directives applier — do NOT emit it yourself.)\n"
+    "  assignee_evidence: a SHORT verbatim substring of the transcript (max ~200 chars) that supports\n"
+    "                     the assignment. This MUST be a literal copy-paste of words from the transcript —\n"
+    "                     do NOT paraphrase, summarise, or fabricate. Use '' (empty string) when\n"
+    "                     assignee_category is 'unassignable'.\n"
+    "  assignee_rationale: one short sentence (max ~200 chars) explaining why this category + evidence\n"
+    "                      implies this assignee. Paraphrasing is fine here.\n"
+    "  assignee_confidence: float 0.0-1.0 — your confidence that this assignment is correct.\n"
+    "                       Use 0.0 when category is 'unassignable'.\n"
     "\n"
     "Also include non-actionable items (informational updates, social chat) with "
     "is_actionable: false so the router agent can see what was filtered at this stage.\n"
@@ -197,6 +212,27 @@ def _extract_from_emails(emails: list[dict]) -> list[dict]:
         extracted  = parsed
         directives = []
 
+    # Anti-confabulation check: when the LLM claims a verbatim transcript span
+    # as evidence for an assignee, verify the span actually appears in the
+    # input text. If not, strip it and knock down confidence. This prevents
+    # the "made up a quote" failure mode that would poison the audit trail.
+    if transcript_mode:
+        combined_text = "\n\n".join(e.get("body", "") for e in emails)
+        for item in extracted:
+            ev = item.get("assignee_evidence")
+            if ev and isinstance(ev, str) and ev.strip():
+                if ev not in combined_text:
+                    print(
+                        f"[agent1] WARNING: hallucinated assignee_evidence stripped from "
+                        f"email_id={item.get('email_id')!r}: {ev[:120]!r}"
+                    )
+                    item["assignee_evidence"] = ""
+                    try:
+                        conf = float(item.get("assignee_confidence") or 0.0)
+                    except (TypeError, ValueError):
+                        conf = 0.0
+                    item["assignee_confidence"] = min(conf, 0.5)
+
     # Attach directives to the list so run_on_items_with_directives can read
     # them, without changing the public return shape.
     try:
@@ -249,6 +285,21 @@ def apply_meeting_directives(items: list[dict], directives: list[dict]) -> list[
             for t in out:
                 if not t.get("suggested_assignee"):
                     t["suggested_assignee"] = value
+                    # Populate rationale metadata ONLY when empty — never
+                    # overwrite per-item reasoning that Agent 1 already set.
+                    if not t.get("assignee_category"):
+                        t["assignee_category"] = "directive_bulk"
+                    if not t.get("assignee_evidence"):
+                        # Bulk directives are not per-ticket quotes, so leave
+                        # evidence blank rather than stuff the directive text
+                        # in (it would fail the substring check elsewhere).
+                        t["assignee_evidence"] = ""
+                    if not t.get("assignee_rationale"):
+                        t["assignee_rationale"] = (
+                            f"filled by bulk meeting directive '{value}'"
+                        )
+                    if t.get("assignee_confidence") in (None, 0, 0.0):
+                        t["assignee_confidence"] = 0.8
                     count += 1
             print(f"[directives] assign_all: set '{value}' on {count} item(s) with blank assignee")
 
