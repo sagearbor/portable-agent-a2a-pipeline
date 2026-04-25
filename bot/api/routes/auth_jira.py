@@ -33,10 +33,9 @@ app under Permissions → Jira API → Configure → Granular scopes):
     read:status:jira            status info
     read:field:jira             field definitions
 
-  Project reads (projects, roles, versions):
+  Project reads (projects, roles):
     read:project:jira
     read:project-role:jira
-    read:project-version:jira
     read:project-category:jira
 
   People reads (assignee picker + role members):
@@ -45,8 +44,7 @@ app under Permissions → Jira API → Configure → Granular scopes):
     read:group:jira
     read:application-role:jira
 
-  Agile (sprints/boards):
-    read:board-scope:jira-software
+  Agile (sprints):
     read:sprint:jira-software
 
   Writes (ticket creation + linking):
@@ -100,12 +98,15 @@ _SCOPES = (
     # Granular issue reads (required for the enhanced /rest/api/3/search/jql)
     "read:jql:jira read:issue:jira read:issue-details:jira read:issue-meta:jira "
     "read:issue-type:jira read:status:jira read:field:jira "
-    # Granular project reads
-    "read:project:jira read:project-role:jira read:project-version:jira read:project-category:jira "
+    # Granular project reads (read:project-version:jira omitted to stay under
+    # Atlassian's 50-permission soft cap; not currently used)
+    "read:project:jira read:project-role:jira read:project-category:jira "
     # Granular people reads
     "read:user:jira read:avatar:jira read:group:jira read:application-role:jira "
-    # Granular agile
-    "read:board-scope:jira-software read:sprint:jira-software "
+    # Granular agile (read:board-scope:jira-software omitted — same 50-permission
+    # cap reasoning; sprints kept since the API tracks active sprint metadata
+    # used in ticket descriptions)
+    "read:sprint:jira-software "
     # Granular writes
     "write:issue:jira write:comment:jira write:issue-link:jira "
     # Identity + refresh
