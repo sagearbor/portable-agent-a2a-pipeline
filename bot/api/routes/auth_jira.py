@@ -35,7 +35,7 @@ app under Permissions → Jira API → Configure → Granular scopes):
 
   Project reads (projects, roles, versions):
     read:project:jira
-    read:project.role:jira
+    read:project-role:jira
     read:project-version:jira
     read:project-category:jira
 
@@ -101,7 +101,7 @@ _SCOPES = (
     "read:jql:jira read:issue:jira read:issue-details:jira read:issue-meta:jira "
     "read:issue-type:jira read:status:jira read:field:jira "
     # Granular project reads
-    "read:project:jira read:project.role:jira read:project-version:jira read:project-category:jira "
+    "read:project:jira read:project-role:jira read:project-version:jira read:project-category:jira "
     # Granular people reads
     "read:user:jira read:avatar:jira read:group:jira read:application-role:jira "
     # Granular agile
@@ -115,6 +115,12 @@ _SCOPES = (
 _SID_KEY   = "jira_sid"          # small session-id pointer; value lives in _TOKEN_STORE
 _STATE_KEY = "jira_oauth_state"  # session dict entry for CSRF state
 _EXPIRY_SKEW_SECONDS = 60        # refresh tokens 60s before real expiry
+# Hard cap on how long we keep any session.  Atlassian's OAuth "does your app
+# store personal data?" form treats caching beyond 24 hours as storing personal
+# data and requires the Personal Data Reporting API.  Expiring at 23h keeps us
+# cleanly under the threshold so we can continue to answer "No" to that
+# question.  Users re-authenticate once a day; acceptable for an internal tool.
+_MAX_SESSION_AGE_SECONDS = 23 * 3600
 
 # ---------------------------------------------------------------------------
 # Server-side token store
@@ -190,6 +196,14 @@ def get_oauth_session(request: Request) -> dict | None:
     sess = _TOKEN_STORE.get(sid)
     if not sess:
         # Server restarted or entry was evicted — drop the stale pointer
+        request.session.pop(_SID_KEY, None)
+        return None
+
+    # Hard cap on session lifetime (see _MAX_SESSION_AGE_SECONDS note): once we
+    # cross the threshold the entry is evicted even if Atlassian would still
+    # honour the refresh token.  User gets bounced to re-login.
+    if time.time() - sess.get("created_at", 0) > _MAX_SESSION_AGE_SECONDS:
+        _TOKEN_STORE.pop(sid, None)
         request.session.pop(_SID_KEY, None)
         return None
 
@@ -377,6 +391,7 @@ async def jira_callback(
         "access_token":  access_token,
         "refresh_token": tokens.get("refresh_token"),
         "expires_at":    int(time.time()) + int(tokens.get("expires_in", 3600)) - _EXPIRY_SKEW_SECONDS,
+        "created_at":    int(time.time()),
         "cloud_id":      site["id"],
         "site_url":      site.get("url", ""),
         "account_id":    account_id,
