@@ -16,13 +16,36 @@ load_dotenv()
 
 
 def _get_azure_credential():
-    """Returns the right Azure credential based on AZURE_AUTH_MODE."""
+    """
+    Returns the right Azure credential based on AZURE_AUTH_MODE.
+
+    az_login          -> AzureCliCredential (your personal 'az login' session).
+
+    managed_identity  -> ManagedIdentityCredential(client_id=AZURE_CLIENT_ID)
+                         when AZURE_CLIENT_ID is set, otherwise
+                         DefaultAzureCredential.
+
+    Why the AZURE_CLIENT_ID branch matters (IMPORTANT for Azure Container Apps):
+        A *user-assigned* managed identity (UAMI) is ambiguous — one host can
+        have several attached, so DefaultAzureCredential cannot guess which to
+        use and may fail or pick the wrong one. IT's ACA environment uses a
+        UAMI, so set AZURE_CLIENT_ID to that identity's **client ID** and this
+        binds to it explicitly. A *system-assigned* identity needs no client
+        ID — leave AZURE_CLIENT_ID unset and DefaultAzureCredential finds it.
+    """
     if AZURE_AUTH_MODE == "az_login":
         from azure.identity import AzureCliCredential
         return AzureCliCredential()
-    else:
-        from azure.identity import DefaultAzureCredential
-        return DefaultAzureCredential()
+
+    # managed_identity: bind to the user-assigned identity when its client ID
+    # is provided; otherwise fall back to the default credential chain
+    # (system-assigned identity, env credentials, etc.).
+    client_id = (os.environ.get("AZURE_CLIENT_ID") or "").strip()
+    if client_id:
+        from azure.identity import ManagedIdentityCredential
+        return ManagedIdentityCredential(client_id=client_id)
+    from azure.identity import DefaultAzureCredential
+    return DefaultAzureCredential()
 
 
 def _build_azure_responses_client():
@@ -57,8 +80,10 @@ def _build_azure_client():
         Requires: az login to have been run.
 
     managed_identity:
-        Uses DefaultAzureCredential - tries managed identity before az login.
-        Use this in production containers with a managed identity assigned.
+        Uses the container's assigned managed identity (no keys, no tokens).
+        For a USER-assigned identity (the UAMI on Azure Container Apps) you
+        MUST also set AZURE_CLIENT_ID to that identity's client ID — see
+        _get_azure_credential(). For a system-assigned identity, leave it unset.
         WARNING: on a dev VM this authenticates as the VM, not you.
 
     api_key:
@@ -90,7 +115,7 @@ def _build_azure_client():
     else:
         raise ValueError(
             f"Unknown AZURE_AUTH_MODE '{AZURE_AUTH_MODE}'. "
-            "Valid options: 'managed_identity', 'api_key'"
+            "Valid options: 'az_login', 'managed_identity', 'api_key'"
         )
 
 
