@@ -39,6 +39,7 @@ def create_ticket(
     start_date: str | None = None,
     due_date: str | None = None,
     original_estimate: str | None = None,
+    ai_hour_estimate: float | None = None,
 ) -> dict:
     """Create a Jira ticket (Story, Task, Sub-task, Epic, or Bug) in the specified project.
 
@@ -53,6 +54,9 @@ def create_ticket(
         start_date: ISO date string (YYYY-MM-DD) for start date.
         due_date: ISO date string (YYYY-MM-DD) for due date.
         original_estimate: Jira duration string (e.g. "3d", "8h", "1w 2d").
+        ai_hour_estimate: AI hour estimate as a float (e.g. 2.5), stored in the
+            immutable "AI Hour Estimate" field. Derived from original_estimate
+            when omitted.
 
     Returns:
         Dict with keys: ticket_id, url, status, summary, priority.
@@ -69,6 +73,7 @@ def create_ticket(
         start_date=start_date,
         due_date=due_date,
         original_estimate=original_estimate,
+        ai_hour_estimate=ai_hour_estimate,
     )
 
 

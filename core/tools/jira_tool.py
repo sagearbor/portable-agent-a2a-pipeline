@@ -35,6 +35,45 @@ _PRIORITY_MAP = {
     "Low":      "Low",
 }
 
+# Custom field that stores the AI's hour estimate at ticket creation — an
+# immutable reference for estimation-accuracy analysis (AI estimate vs. the
+# time the work actually took). Humans edit Original Estimate / Time Tracking,
+# never this field. The custom field ID is instance-specific (discover with
+# `GET /rest/api/3/field`), so it is env-configurable; the default is the
+# field provisioned in dcri.atlassian.net ("AI Hour Estimate").
+AI_HOUR_ESTIMATE_FIELD = (
+    os.environ.get("JIRA_AI_HOUR_ESTIMATE_FIELD") or "customfield_16496"
+).strip()
+
+
+def _duration_to_hours(duration: str | None) -> float | None:
+    """
+    Convert a Jira duration string to a float number of hours.
+
+    Uses Jira's default time-tracking conventions:
+        1 week = 5 days, 1 day = 8 hours, 1 hour = 60 minutes.
+
+    Examples:
+        "8h"      -> 8.0
+        "3d"      -> 24.0
+        "1w 2d"   -> 56.0
+        "90m"     -> 1.5
+        "2.5h"    -> 2.5
+
+    Returns None when nothing parseable is found (so callers can skip the
+    field rather than write a misleading 0).
+    """
+    if not duration:
+        return None
+    import re
+    units = {"w": 5 * 8, "d": 8, "h": 1.0, "m": 1.0 / 60.0}
+    total = 0.0
+    found = False
+    for value, unit in re.findall(r"(\d+(?:\.\d+)?)\s*([wdhm])", duration.lower()):
+        total += float(value) * units[unit]
+        found = True
+    return round(total, 2) if found else None
+
 
 # ---------------------------------------------------------------------------
 # Credentials dataclass
@@ -195,6 +234,7 @@ def create_ticket(
     start_date: str | None = None,
     due_date: str | None = None,
     original_estimate: str | None = None,
+    ai_hour_estimate: float | None = None,
     assignee_account_id: str | None = None,
 ) -> dict:
     """
@@ -214,6 +254,11 @@ def create_ticket(
         start_date:         optional ISO date string e.g. "2026-03-25"
         due_date:           optional ISO date string e.g. "2026-03-28"
         original_estimate:  optional Jira duration string e.g. "3d", "8h", "1w 2d"
+        ai_hour_estimate:   optional AI hour estimate as a float (e.g. 2.5).
+                            Stored in the immutable "AI Hour Estimate" custom
+                            field for estimate-vs-actual analysis. When not
+                            given but original_estimate is, it is derived
+                            automatically from that duration string.
 
     Returns dict with keys: ticket_id, url, status, summary, priority
     """
@@ -225,6 +270,12 @@ def create_ticket(
         project_key = os.environ["JIRA_PROJECT_KEY"]
 
     jira_priority = _PRIORITY_MAP.get(priority, "Medium")
+
+    # Derive the AI hour estimate from the duration string when not supplied
+    # explicitly, so every ticket that gets an AI effort estimate also records
+    # the immutable numeric value for accuracy analysis.
+    if ai_hour_estimate is None:
+        ai_hour_estimate = _duration_to_hours(original_estimate)
 
     # Jira REST API v3 uses Atlassian Document Format for description
     fields: dict = {
@@ -324,6 +375,30 @@ def create_ticket(
                         print(f"[jira_tool] Date update failed on {ticket_id}: {dr.text[:100]}")
         except Exception as e:
             print(f"[jira_tool] Date update error: {e}")
+
+    # AI Hour Estimate — set via post-create PUT (the custom field may not be
+    # on the project's create screen, but is editable). This is the immutable
+    # AI estimate used for estimate-vs-actual analysis; users edit Original
+    # Estimate / Time Tracking instead, never this field.
+    if ai_hour_estimate is not None and AI_HOUR_ESTIMATE_FIELD:
+        try:
+            er = requests.put(
+                f"{base_url}/rest/api/3/issue/{ticket_id}",
+                json={"fields": {AI_HOUR_ESTIMATE_FIELD: float(ai_hour_estimate)}},
+                auth=auth, headers=headers, timeout=10,
+            )
+            if er.ok:
+                print(
+                    f"[jira_tool] Set AI Hour Estimate "
+                    f"({AI_HOUR_ESTIMATE_FIELD}={ai_hour_estimate}h) on {ticket_id}"
+                )
+            else:
+                print(
+                    f"[jira_tool] AI Hour Estimate update failed on {ticket_id}: "
+                    f"{er.status_code} {er.text[:120]}"
+                )
+        except Exception as e:
+            print(f"[jira_tool] AI Hour Estimate update error on {ticket_id}: {e}")
 
     # Sprint assignment uses the Agile REST API (custom field IDs vary by
     # instance, so we move the issue into the sprint after creation instead

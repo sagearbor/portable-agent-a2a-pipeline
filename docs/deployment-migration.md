@@ -8,6 +8,38 @@ Kept in sync with the code so future sessions (and the future you) can tell
 exactly which config needs to change without diffing three environments.
 
 
+## IT-provided ACA environment (offered 2026-06)
+
+DCRI IT now runs a **shared Azure Container Apps environment** with the full
+infra stack already provisioned, offered as an easier alternative to the
+Foundry-project SDK (use Foundry only for inference). Per IT it already has:
+
+- **User-assigned managed identity (UAMI)** with all roles pre-wired
+- **Postgres** (managed) — our durable store for sessions + per-user prefs
+- **ADLS Gen2** — blob/file storage (transcripts, exports)
+- **Key Vault** — secrets
+- **Log Analytics** — centralized logs/metrics
+
+This changes the migration from "we create the infra" to **"we obtain resource
+IDs from IT and they grant the UAMI the role(s) our app needs."** What we still
+own: the container image, the app config (env vars), and confirming the UAMI
+has the specific roles below.
+
+**Ask IT for, at the meeting:**
+1. The **UAMI client ID** (→ our `AZURE_CLIENT_ID` env var — see §2; without it
+   `DefaultAzureCredential` cannot pick the right user-assigned identity).
+2. Confirmation the UAMI has **`Cognitive Services OpenAI User`** on
+   `ai-foundry-dcri-sage` (our token scope is `cognitiveservices.azure.com`).
+3. Confirmation the UAMI has **`Key Vault Secrets User`** on their Key Vault.
+4. The **ACR name** + confirmation the UAMI has **`AcrPull`** (or how they want
+   the image pushed/built — `az acr build` vs. push).
+5. **Postgres** connection details (host, db, the secret in Key Vault) so we can
+   move session/prefs storage off the ephemeral container filesystem (see §9).
+6. The **Container Apps environment name** + resource group to deploy into.
+7. Whether ingress should be **external** (public FQDN) or internal-only behind
+   their gateway, and the **target port** they expect (we default 8080).
+
+
 ## Environments we support
 
 | Env | Base URL | Purpose |
@@ -54,6 +86,7 @@ one of these (scheme, host, port, path). Trailing slashes matter. `http` vs
 | `BOT_PORT` | `3011+` (any free VM port outside 3001–3010 POC range) | `3006` | `8080` (Container Apps default) |
 | `AZURE_AUTH_MODE` | `az_login` | `api_key` (bearer-token hack) | `managed_identity` |
 | `AZURE_OPENAI_KEY` | not needed | needed (hack) | not needed (managed identity) |
+| `AZURE_CLIENT_ID` | not set | not set | **UAMI client ID** (required for user-assigned identity — get from IT) |
 | `SESSION_COOKIE_DOMAIN` | not set | not set | may need to set when behind custom domain / multi-subdomain |
 
 
@@ -62,6 +95,8 @@ one of these (scheme, host, port, path). Trailing slashes matter. `http` vs
 - `ATLASSIAN_OAUTH_CLIENT_ID` — same app reg everywhere
 - `ATLASSIAN_OAUTH_CLIENT_SECRET` — same; rotate separately, not per-env
 - `JIRA_BASE_URL`, `JIRA_PROJECT_KEY`, `JIRA_PREFERRED_HOST`
+- `JIRA_AI_HOUR_ESTIMATE_FIELD` — defaults to `customfield_16496` (the "AI Hour
+  Estimate" field in dcri.atlassian.net); only set if pointing at another Jira
 - `GRAPH_TENANT_ID`, `GRAPH_USER_EMAIL`
 - `AZURE_OPENAI_ENDPOINT`
 
@@ -114,8 +149,17 @@ az containerapp create \
     SESSION_COOKIE_SECURE=true \
     JIRA_BASE_URL=https://dcri.atlassian.net \
     AZURE_AUTH_MODE=managed_identity \
+    AZURE_CLIENT_ID=<uami-client-id-from-IT> \
     BOT_PORT=8080
 ```
+
+> **The single most common managed-identity failure:** omitting `AZURE_CLIENT_ID`
+> with a user-assigned identity. `DefaultAzureCredential` then can't tell which
+> attached identity to use and either fails or grabs the wrong one. Our
+> `client.py` binds to `ManagedIdentityCredential(client_id=AZURE_CLIENT_ID)`
+> when the var is set — so set it. (Use `--user-assigned <uami-resource-id>` on
+> the container app AND pass the UAMI's *client ID* as this env var; the
+> resource ID and client ID are different values.)
 
 
 ### 5b. Managed-identity primer (what the object IDs in our notes mean)
@@ -181,3 +225,66 @@ Run in order:
 - **Atlassian OAuth redirect URIs are env-specific and must be pre-registered.** Every new env (staging, prod, preview) = another URI added to the app registration. Not automatable via API in a clean way; plan for it.
 - **First-time consent screen** — if the Duke Jira instance requires admin approval for third-party OAuth apps, a site-admin will be prompted the first time a Duke user signs in through the Container Apps URL. One-time per user per site.
 - **Cookie domain** — if we ever split the app across subdomains (e.g., `api.sagejirabot.dcri.duke.edu` and `ui.sagejirabot.dcri.duke.edu`), we'll need `SESSION_COOKIE_DOMAIN=dcri.duke.edu`. Not needed while everything is one FQDN.
+
+
+### 9. State persistence — the real ACA gotcha (do this before scaling out)
+
+On the VM, two things persist to the **local filesystem** (the `./data` bind
+mount in `docker-compose.yml`):
+
+- **Per-user prefs** — `bot/data/series_defaults_store.py` writes
+  `bot/data/series_defaults.json` (`SERIES_STORE_BACKEND=file`).
+- **Sessions** — `bot/session_store.py` (in-memory / process-local).
+
+**ACA's local filesystem is ephemeral** and a revision can run **multiple
+replicas**. Consequences if we change nothing:
+
+- Any prefs written to the JSON file vanish on restart/redeploy and are **not
+  shared** across replicas.
+- In-memory sessions don't survive a restart and **break under multi-replica**
+  (a user's second request can land on a replica that never saw their login →
+  random sign-outs).
+
+**Two options:**
+
+| | Quick (demo-safe) | Proper (production) |
+|---|---|---|
+| What | Pin `minReplicas = maxReplicas = 1`; accept that a redeploy resets sessions/prefs | Move sessions + prefs to **IT's Postgres**; keep any large artifacts in **ADLS Gen2** |
+| Effort | one ACA setting | implement a Postgres-backed `session_store` + `series_defaults_store` backend |
+| Good for | tomorrow's demo / first deploy | once real users rely on it |
+
+For the first cutover, **pin to a single replica** and move on. Schedule the
+Postgres backend as the immediate follow-up — IT already provisioned Postgres
+specifically so we don't have to run our own. (Note: `SERIES_STORE_BACKEND`
+already exists as a seam — add a `postgres` backend alongside `file`.)
+
+
+### 10. Expose the pipeline over MCP *and* REST
+
+The REST API (FastAPI, `bot/api/main.py`) is already container-ready and is the
+primary external interface. To also serve the **MCP** tools
+(`mcp_servers/jira_server.py`, `transcript_server.py`) remotely:
+
+- Today they call `mcp.run()` with **stdio** transport — fine for a local
+  Claude Code subprocess, but **not reachable over the network**.
+- For ACA, run FastMCP with **streamable-HTTP** transport
+  (`mcp.run(transport="http", host="0.0.0.0", port=...)`) and expose it through
+  ingress (either a second container/port or mounted under the same app).
+- The internal agent→agent handoff stays as-is (plain dicts / "A2A"); MCP and
+  REST are the *external* surfaces. This is a tool/service, not an agent, from
+  the consumer's point of view.
+
+
+### 11. Pre-flight checklist (quick scan before deploy)
+
+- [ ] `AZURE_AUTH_MODE=managed_identity` **and** `AZURE_CLIENT_ID=<uami client id>` set
+- [ ] UAMI has `Cognitive Services OpenAI User` on `ai-foundry-dcri-sage`
+- [ ] Secrets in Key Vault, referenced as ACA secrets (not plaintext): `ATLASSIAN_OAUTH_CLIENT_SECRET`, `SESSION_SECRET`, `JIRA_API_TOKEN`, (later) `GRAPH_CLIENT_SECRET`
+- [ ] `SESSION_SECRET` set to a fresh value (not the ephemeral per-process fallback)
+- [ ] `SESSION_COOKIE_SECURE=true` (ACA serves HTTPS)
+- [ ] Atlassian OAuth app: new ACA callback URL added; `ATLASSIAN_OAUTH_REDIRECT_URI` matches exactly
+- [ ] Azure AD SSO app (if used): ACA redirect URI added
+- [ ] `minReplicas = maxReplicas = 1` until Postgres-backed state lands (see §9)
+- [ ] Image built and pushed to IT's ACR; UAMI has `AcrPull`
+- [ ] `start-docker.sh` bearer-token hack is **not** on the prod path (VM-only)
+- [ ] Smoke test `/health`; then sign in and create a ticket end-to-end
