@@ -40,6 +40,29 @@ logger = logging.getLogger(__name__)
 # Internal helpers — each returns a list and never raises
 # ---------------------------------------------------------------------------
 
+def _looks_like_person(display_name: str) -> bool:
+    """
+    Heuristic: keep only real people in the assignee list, not shared/team
+    accounts.  The whole point of assigning is a single accountable point
+    person, so group-style accounts like ``dai.scum.managers`` or ``stc123``
+    must be excluded.
+
+    Jira exposes no "is this a human" flag — such aliases are ordinary user
+    accounts (accountType ``atlassian``) — so we infer from the display name:
+      * "First Last" (contains a space) -> person
+      * a single token (mononym) is a person only if it's plain letters;
+        dotted / numeric / underscored handles are treated as group/service
+        accounts and dropped.
+    """
+    name = (display_name or "").strip()
+    if not name:
+        return False
+    if " " in name:
+        return True
+    # Single-token: reject handles containing '.', digits, or '_'.
+    return not any(c.isdigit() or c in "._" for c in name)
+
+
 def _fetch_epics(
     base: str,
     project_key: str,
@@ -291,6 +314,8 @@ def _fetch_assignable_users(
                     continue
                 if u.get("accountType") not in (None, "atlassian"):
                     continue
+                if not _looks_like_person(u.get("displayName")):
+                    continue  # skip shared/group accounts (e.g. dai.scum.managers)
                 seen.add(acct)
                 users.append({
                     "accountId":   acct,
@@ -357,8 +382,12 @@ def _fetch_role_members(
                     logger.warning("Role %s query failed %s", role_name, r.status_code)
                     continue
                 for actor in r.json().get("actors", []):
-                    # Only include human users — skip groups
+                    # Only include human users — skip group-role actors
                     if actor.get("type") != "atlassian-user-role-actor":
+                        continue
+                    # ...and skip shared/team USER accounts named like groups
+                    # (e.g. dai.scum.managers) — assignees must be a real person.
+                    if not _looks_like_person(actor.get("displayName")):
                         continue
                     acct = actor.get("actorUser", {}).get("accountId", "")
                     if not acct or acct in seen_ids:
