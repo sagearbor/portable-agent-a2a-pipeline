@@ -10,6 +10,7 @@ A2A output: list of dicts, one per email, with extracted fields.
 """
 
 import json
+from core.agents.llm_json import parse_llm_json
 from core.clients.client import get_client, token_limit_kwarg
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, AGENT1_MODEL
 from core.tools.outlook_tool import read_emails
@@ -192,14 +193,10 @@ def _extract_from_emails(emails: list[dict]) -> list[dict]:
             f"[agent1] LLM returned empty content. Possible content filter or token limit issue."
         )
 
-    # Strip markdown code fences if LLM wraps output in ```json ... ```
-    stripped = raw.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.split("\n", 1)[-1]
-        stripped = stripped.rsplit("```", 1)[0].strip()
-
-    print(f"[agent1] Raw LLM response (first 300 chars): {stripped[:300]}")
-    parsed = json.loads(stripped)
+    print(f"[agent1] Raw LLM response (first 300 chars): {raw.strip()[:300]}")
+    # Tolerant parse: handles ```json fences, surrounding prose, trailing
+    # commas and empty values that strict json.loads would reject.
+    parsed = parse_llm_json(raw, context="agent1")
 
     # Accept either the new {items, meeting_directives} object form or the
     # legacy plain array. We stash directives as a second element on the

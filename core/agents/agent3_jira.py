@@ -13,6 +13,7 @@ as an actual tool/function call rather than a direct Python import.
 
 import json
 import os
+from core.agents.llm_json import parse_llm_json
 from core.clients.client import get_client, token_limit_kwarg
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, AGENT3_MODEL
 from core.tools.jira_tool import create_ticket, JiraCredentials
@@ -104,13 +105,8 @@ def run(
                 "Token limit may be too low or content filter triggered."
             )
 
-    # Strip markdown code fences if present
-    stripped = raw.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.split("\n", 1)[-1]
-        stripped = stripped.rsplit("```", 1)[0].strip()
-
-    tickets_to_create = json.loads(stripped)
+    # Tolerant parse (fences/prose/trailing commas/empty values).
+    tickets_to_create = parse_llm_json(raw, context="agent3")
 
     # Deterministic carry-forward from approved_items (Agent 2 output) —
     # the description-writing LLM only returns summary/description/priority,
