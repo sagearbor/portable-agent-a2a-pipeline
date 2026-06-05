@@ -29,7 +29,6 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from bot.api.routes._jira_helpers import (
     validate_base_url,
-    get_jira_auth,
     get_jira_request_config,
 )
 
@@ -226,17 +225,113 @@ def _fetch_fix_versions(
         return []
 
 
-def _fetch_project_members(
+def _fetch_assignable_users(
     base: str,
     project_key: str,
     auth,
     headers: dict,
 ) -> list[dict]:
     """
-    Fetch actual project members (not the full org user list).
+    Fetch users who can be assigned issues in the project via
+    GET /rest/api/3/user/assignable/search — the same endpoint Jira's own
+    assignee picker uses.
+
+    Why this and not project-role membership: reading role *actors*
+    (/project/{key}/role/{id}) requires the *Administer Projects* permission.
+    A normal user signed in via OAuth 3LO (acting as themselves, not as the
+    admin service account) gets 403 on those reads, so the role-scrape
+    silently returns an empty list and the assignee dropdown shows only
+    "Unassigned".  ``user/assignable/search`` only needs the common
+    *Browse users and groups* permission, so it works for ordinary signed-in
+    users and for both team- and company-managed projects.
+
+    Returns list of {"accountId", "displayName", "email"} dicts, active
+    human (``atlassian``) accounts only, sorted by display name.
+    Returns [] on any failure so the caller can fall back to role members.
+    """
+    users: list[dict] = []
+    seen: set[str] = set()
+    start_at = 0
+    page = 100
+    # Bound the paging so a huge directory can't loop forever; a dropdown
+    # never needs more than a few hundred names.
+    max_users = 500
+
+    try:
+        while start_at < max_users:
+            resp = requests.get(
+                f"{base}/rest/api/3/user/assignable/search",
+                params={
+                    "project":    project_key,
+                    "startAt":    start_at,
+                    "maxResults": page,
+                },
+                auth=auth,
+                headers=headers,
+                timeout=15,
+            )
+
+            if resp.status_code in (401, 403):
+                # Permission/scope problem — let the caller fall back.
+                logger.warning(
+                    "Assignable-user search returned %s for %s",
+                    resp.status_code, project_key,
+                )
+                return []
+
+            if not resp.ok:
+                logger.warning(
+                    "Assignable-user search failed %s: %s",
+                    resp.status_code, resp.text[:200],
+                )
+                break
+
+            batch = resp.json()
+            if not isinstance(batch, list) or not batch:
+                break
+
+            for u in batch:
+                acct = u.get("accountId", "")
+                # Skip non-human (apps/bots) and inactive accounts; the
+                # picker should only offer real, currently-active assignees.
+                if not acct or acct in seen:
+                    continue
+                if not u.get("active", True):
+                    continue
+                if u.get("accountType") not in (None, "atlassian"):
+                    continue
+                seen.add(acct)
+                users.append({
+                    "accountId":   acct,
+                    "displayName": (u.get("displayName") or "").strip(),
+                    "email":       u.get("emailAddress", "") or "",
+                })
+
+            if len(batch) < page:
+                break
+            start_at += page
+
+        users.sort(key=lambda u: u["displayName"].lower())
+        return users
+
+    except Exception as exc:
+        logger.warning("Assignable-user search error: %s", exc)
+        return []
+
+
+def _fetch_role_members(
+    base: str,
+    project_key: str,
+    auth,
+    headers: dict,
+) -> list[dict]:
+    """
+    Fallback: collect users from project role memberships.
 
     Queries project role memberships and collects unique human users
     from roles like Administrators, Developers, Scrum Master, etc.
+    Requires *Administer Projects* permission to read role actors, so this
+    only works for admin-level credentials (e.g. the service account).
     Sorted alphabetically by display name.
     """
     try:
@@ -295,6 +390,31 @@ def _fetch_project_members(
         return []
 
 
+def _fetch_project_members(
+    base: str,
+    project_key: str,
+    auth,
+    headers: dict,
+) -> list[dict]:
+    """
+    Return the list of people to offer in the assignee dropdown.
+
+    Primary source is ``user/assignable/search`` (works for any signed-in
+    user with Browse-users permission).  If that yields nothing — e.g. an
+    older endpoint quirk — fall back to scraping project role members, which
+    works when the caller has admin rights (the service account).
+    """
+    users = _fetch_assignable_users(base, project_key, auth, headers)
+    if users:
+        return users
+
+    logger.info(
+        "Assignable-user search empty for %s; falling back to role members",
+        project_key,
+    )
+    return _fetch_role_members(base, project_key, auth, headers)
+
+
 # ---------------------------------------------------------------------------
 # Route
 # ---------------------------------------------------------------------------
@@ -313,7 +433,8 @@ async def get_jira_context(
     Each section is fetched independently; if one fails (e.g. Kanban
     boards have no sprints) the others still return data.
 
-    Auth preference: OAuth session token when signed in, else service-account.
+    Auth: the signed-in user's OAuth session (401 if not signed in); the data
+    therefore reflects the user's own Jira permissions.
     (Granular scopes read:jql:jira + read:issue:jira + read:issue-details:jira
     + read:issue-meta:jira must be granted on the Atlassian OAuth app for
     /rest/api/3/search/jql to succeed under OAuth 3LO.)
@@ -321,23 +442,32 @@ async def get_jira_context(
     # SSRF guard
     base_validated = validate_base_url(base_url)
 
+    # OAuth-only: raises 401 if the caller is not signed in.  Every Jira read
+    # is attributed to the signed-in user so their own permissions apply.
     cfg = get_jira_request_config(request, base_validated)
 
-    # Derive (auth, headers) from cfg to keep existing helper signatures.
-    # Under OAuth: auth=None, headers contain the Bearer token.
-    # Under Basic: auth=HTTPBasicAuth, headers contain just Accept.
-    auth = cfg.kwargs.get("auth")
+    auth = cfg.kwargs.get("auth")  # None under OAuth (token is in headers)
     headers = dict(cfg.kwargs.get("headers", {}))
     headers.setdefault("Accept", "application/json")
     headers.setdefault("Content-Type", "application/json")
-    base = cfg.base
 
     try:
-        epics        = _fetch_epics(base, project_key, auth, headers)
-        sprints      = _fetch_sprints(base, project_key, auth, headers)
-        fix_versions = _fetch_fix_versions(base, project_key, auth, headers)
-        users        = _fetch_project_members(base, project_key, auth, headers)
-    except HTTPException:
+        return {
+            "epics":        _fetch_epics(cfg.base, project_key, auth, headers),
+            "sprints":      _fetch_sprints(cfg.base, project_key, auth, headers),
+            "fix_versions": _fetch_fix_versions(cfg.base, project_key, auth, headers),
+            "users":        _fetch_project_members(cfg.base, project_key, auth, headers),
+        }
+    except HTTPException as exc:
+        # Jira rejected the user's token (expired session) or the user lacks
+        # access to this project.  Surface a clear, actionable message instead
+        # of a generic credentials error.
+        if exc.status_code in (401, 403):
+            raise HTTPException(
+                status_code=exc.status_code,
+                detail="Your Jira session is invalid or you lack access to "
+                       "this project — please sign in again.",
+            )
         raise
     except requests.exceptions.ConnectionError as exc:
         raise HTTPException(
@@ -347,12 +477,5 @@ async def get_jira_context(
     except requests.exceptions.Timeout:
         raise HTTPException(
             status_code=504,
-            detail=f"Timed out connecting to Jira",
+            detail="Timed out connecting to Jira",
         )
-
-    return {
-        "epics":        epics,
-        "sprints":      sprints,
-        "fix_versions": fix_versions,
-        "users":        users,
-    }

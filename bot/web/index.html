@@ -418,6 +418,11 @@
       padding: 8px 10px;
       border-bottom: 2px solid var(--border);
       background: #f8f9fd;
+      /* Keep the header visible while scrolling the bounded wrapper so the
+         user always knows which column is which. */
+      position: sticky;
+      top: 0;
+      z-index: 3;
     }
 
     .ticket-table th:first-child {
@@ -458,7 +463,7 @@
     .ticket-table .col-check  { width: 36px; text-align: center; }
     .ticket-table .col-sum    { min-width: 200px; }
     .ticket-table .col-pri    { width: 110px; }
-    .ticket-table .col-desc   { min-width: 260px; }
+    .ticket-table .col-desc   { min-width: 210px; }
     .ticket-table .col-del    { width: 70px; text-align: center; }
 
     .ticket-status-badge {
@@ -789,8 +794,8 @@
     .ticket-table .col-epic    { min-width: 150px; }
     .ticket-table .col-effort  { width: 70px; }
     .ticket-table .col-pri     { width: 110px; }
-    .ticket-table .col-start   { width: 130px; }
-    .ticket-table .col-due     { width: 130px; }
+    .ticket-table .col-start   { width: 120px; }
+    .ticket-table .col-due     { width: 120px; }
     .ticket-table .col-deps    { width: 90px; }
     .ticket-table .col-sprint  { min-width: 120px; }
     .ticket-table .col-fixver  { min-width: 120px; }
@@ -802,7 +807,15 @@
     }
     .label-pill.auto { background: #e8f0fe; color: #1a4f9c; }
     .label-pill.user { background: #f0f2f8; color: #4a5066; }
-    .ticket-table-wrap { overflow-x: auto; }
+    /* Bound the height so BOTH scrollbars stay inside the viewport.  The old
+       table was ~1800px wide and as tall as the row count, so the horizontal
+       scrollbar sat below the fold — you had to scroll to the very bottom just
+       to scroll left/right.  Capping the height keeps the horizontal scrollbar
+       on screen, and the sticky header (above) keeps column labels visible. */
+    .ticket-table-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 240px);
+    }
 
     /* Rejected items collapsible */
     .rejected-panel { margin-bottom: 12px; }
@@ -1933,6 +1946,10 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
     document.getElementById('section-tickets').style.display = 'block';
     document.getElementById('section-tickets').scrollIntoView({ behavior: 'smooth' });
     updateNavSteps();
+    // Size the table scroll box now and again after the smooth-scroll settles,
+    // so the horizontal scrollbar lands at the bottom of the viewport.
+    sizeTicketTableWrap();
+    setTimeout(sizeTicketTableWrap, 450);
 
   } catch (err) {
     hideAlert(infoEl);
@@ -1945,6 +1962,22 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
 /* =========================================================================
    Section 3 — Ticket Review
 ========================================================================= */
+
+/* Size the ticket table's scroll box so its bottom (and therefore its
+   horizontal scrollbar) sits at the bottom of the viewport, no matter how
+   much content (bulk-apply bar, anchor bar, etc.) sits above it.  A fixed CSS
+   max-height can't do this because the table starts at a variable offset down
+   the page; computing from the live position keeps the horizontal scrollbar
+   reachable without scrolling to the very bottom of all the rows. */
+function sizeTicketTableWrap() {
+  const wrap = document.querySelector('.ticket-table-wrap');
+  if (!wrap || wrap.offsetParent === null) return;   // not visible -> skip
+  const top = wrap.getBoundingClientRect().top;       // px from viewport top
+  const h = window.innerHeight - top - 16;            // leave a small margin
+  wrap.style.maxHeight = Math.max(220, h) + 'px';     // floor so it's usable
+}
+window.addEventListener('resize', sizeTicketTableWrap);
+
 function renderTickets() {
   const tbody = document.getElementById('ticket-tbody');
   tbody.innerHTML = '';
@@ -2187,6 +2220,7 @@ function renderTickets() {
   updateSelectAll();
   renderRejectedPanel();
   populateBulkDropdowns();
+  sizeTicketTableWrap();   // row count changed -> re-fit the scroll box
 }
 
 /* =========================================================================

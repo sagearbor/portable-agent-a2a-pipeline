@@ -345,34 +345,29 @@ async def submit_ticket(req: SubmitTicketRequest, request: Request) -> TicketRes
     finishes editing.  No LLM involved — the summary and description
     are taken verbatim from the request.
 
-    Auth preference:
-      1. OAuth session bearer token (ticket reporter = signed-in user)
-      2. Caller-supplied Basic auth in the request body
-      3. JIRA_EMAIL / JIRA_API_TOKEN service-account env vars
+    Auth: requires a signed-in Atlassian OAuth session so the ticket is
+    attributed to the actual user and their own Jira permissions apply.
+    Not signed in -> HTTPException(401).  There is intentionally no
+    service-account / Basic-auth write fallback (it would let any visitor
+    create tickets as the bot account).
     """
     from core.tools.jira_tool import create_ticket as _create_ticket, JiraCredentials
 
-    # Build credentials object (or None to fall back to env vars).
-    credentials: JiraCredentials | None = None
-
+    # OAuth required — ticket is attributed to the signed-in user.
     sess = get_oauth_session(request)
-    if sess and sess.get("access_token") and sess.get("cloud_id"):
-        # OAuth mode — ticket will be attributed to the signed-in user
-        credentials = JiraCredentials(
-            base_url=sess.get("site_url", ""),
-            email="",
-            api_token="",
-            project_key=req.project_key,
-            access_token=sess["access_token"],
-            cloud_id=sess["cloud_id"],
+    if not (sess and sess.get("access_token") and sess.get("cloud_id")):
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in to Jira to create tickets.",
         )
-    elif req.jira_base_url or req.jira_email or req.jira_api_token:
-        credentials = JiraCredentials(
-            base_url=req.jira_base_url    or os.environ.get("JIRA_BASE_URL",   ""),
-            email=req.jira_email          or os.environ.get("JIRA_EMAIL",      ""),
-            api_token=req.jira_api_token  or os.environ.get("JIRA_API_TOKEN",  ""),
-            project_key=req.project_key,
-        )
+    credentials = JiraCredentials(
+        base_url=sess.get("site_url", ""),
+        email="",
+        api_token="",
+        project_key=req.project_key,
+        access_token=sess["access_token"],
+        cloud_id=sess["cloud_id"],
+    )
 
     # Temporarily set JIRA_PROJECT_KEY so the fallback path in _client() works
     original_key = os.environ.get("JIRA_PROJECT_KEY", "ST")
@@ -550,14 +545,32 @@ async def submit_tickets_batch(req: BatchSubmitRequest, request: Request) -> Bat
     3. Create Stories under their respective epics
     4. Create issue links for dependencies
 
-    Auth: when a Jira OAuth session is active, all tickets are created
-    *as* the signed-in user (reporter = their Atlassian account).  Falls
-    back to the service-account JIRA_EMAIL/JIRA_API_TOKEN otherwise.
+    Auth: requires a signed-in Atlassian OAuth session — all tickets are
+    created *as* the signed-in user (reporter = their Atlassian account) so
+    their own Jira permissions apply.  Not signed in -> HTTPException(401).
+    There is intentionally no service-account write fallback.
     """
     from core.tools.jira_tool import (
         create_ticket as _create_ticket,
         create_issue_link as _create_issue_link,
         JiraCredentials,
+    )
+
+    # OAuth required — every _create_ticket() below is attributed to the
+    # signed-in user.  Refuse before creating anything if not signed in.
+    sess = get_oauth_session(request)
+    if not (sess and sess.get("access_token") and sess.get("cloud_id")):
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in to Jira to create tickets.",
+        )
+    oauth_creds = JiraCredentials(
+        base_url=sess.get("site_url", ""),
+        email="",
+        api_token="",
+        project_key=req.project_key,
+        access_token=sess["access_token"],
+        cloud_id=sess["cloud_id"],
     )
 
     batch_ts = req.batch_id or datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
@@ -566,20 +579,6 @@ async def submit_tickets_batch(req: BatchSubmitRequest, request: Request) -> Bat
     # Set project key
     original_key = os.environ.get("JIRA_PROJECT_KEY", "ST")
     os.environ["JIRA_PROJECT_KEY"] = req.project_key
-
-    # Build OAuth-derived credentials if a user session is active, so every
-    # _create_ticket() call below is attributed to the signed-in user.
-    oauth_creds: JiraCredentials | None = None
-    sess = get_oauth_session(request)
-    if sess and sess.get("access_token") and sess.get("cloud_id"):
-        oauth_creds = JiraCredentials(
-            base_url=sess.get("site_url", ""),
-            email="",
-            api_token="",
-            project_key=req.project_key,
-            access_token=sess["access_token"],
-            cloud_id=sess["cloud_id"],
-        )
 
     results: list[BatchTicketResult] = []
     epics_created: list[dict] = []
