@@ -19,7 +19,6 @@ from pydantic import BaseModel
 
 from bot.api.routes._jira_helpers import (
     validate_base_url,
-    get_jira_auth,
     get_jira_request_config,
 )
 
@@ -108,7 +107,7 @@ async def check_duplicates(
     3. Calls Jira REST API (POST /rest/api/3/search/jql)
     4. Returns up to 3 matching issues per summary
 
-    Auth preference: OAuth session when signed in, else service-account.
+    Auth: the signed-in user's OAuth session (401 if not signed in).
     ``url`` in each duplicate result points at the user-browsable site URL
     (dcri.atlassian.net/browse/<KEY>), not the api.atlassian.com API URL,
     so that clicking opens the ticket in the user's browser.

@@ -150,7 +150,7 @@ async def health() -> JSONResponse:
         status_code=200,
         content={
             "status": "ok",
-            "version": "0.9.0",
+            "version": "0.10.6",
             "provider": PROVIDER,
             "jira_project": os.environ.get("JIRA_PROJECT_KEY") or None,
         }
@@ -161,7 +161,7 @@ async def health() -> JSONResponse:
 async def ping():
     """Cache-proof version check — new endpoint NGINX has never cached."""
     import datetime
-    return {"v": "0.9.0", "t": datetime.datetime.now().isoformat()}
+    return {"v": "0.10.6", "t": datetime.datetime.now().isoformat()}
 
 
 # ---------------------------------------------------------------------------
@@ -180,16 +180,44 @@ _web_dir = _pathlib.Path(__file__).parent.parent / "web"
 _index_html = _web_dir / "index.html"
 
 
+# Cache-Control that tells NGINX (and the browser) never to cache the HTML
+# document, so a redeploy is picked up on the next load.  Static assets
+# (CSS/JS/images) under other paths are still served by StaticFiles with their
+# normal caching — the HTML is the only thing that must always be fresh.
+_NO_STORE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"}
+
+
+def _serve_index() -> HTMLResponse:
+    """index.html with no etag/last-modified and an explicit no-store header
+    so NGINX won't proxy-cache a stale copy of the UI."""
+    return HTMLResponse(
+        content=_index_html.read_text(encoding="utf-8"),
+        headers=_NO_STORE,
+    )
+
+
+@app.get("/")
+async def serve_root():
+    """Serve the UI at "/" itself without caching.
+
+    Registered BEFORE the StaticFiles mount below so this wins for the exact
+    "/" path (StaticFiles still handles /style.css, /app.js, images, etc.).
+    Previously "/" was served by StaticFiles, which emits etag + last-modified;
+    NGINX cached that and kept serving an old UI after redeploys.
+    """
+    return _serve_index()
+
+
 @app.get("/ui")
 async def serve_ui():
     """Serve index.html without etag/last-modified so NGINX won't cache it."""
-    return HTMLResponse(content=_index_html.read_text(encoding="utf-8"))
+    return _serve_index()
 
 
 @app.get("/v2")
 async def serve_v2():
     """Fresh URL that NGINX has never cached."""
-    return HTMLResponse(content=_index_html.read_text(encoding="utf-8"))
+    return _serve_index()
 
 
 if _web_dir.is_dir():

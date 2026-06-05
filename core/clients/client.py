@@ -107,9 +107,22 @@ def _build_azure_client():
             api_version=api_version,
         )
     elif AZURE_AUTH_MODE == "api_key":
+        key = os.environ["AZURE_OPENAI_KEY"]
+        # The Docker dev workaround (start-docker.sh) injects an Azure AD
+        # *bearer token* (a JWT) as AZURE_OPENAI_KEY because the container can't
+        # run `az login`. Cognitive Services rejects an AAD token sent in the
+        # `api-key` header (401 "invalid subscription key"), so when the value
+        # is a JWT, pass it as azure_ad_token (-> Authorization: Bearer) instead.
+        # A real resource key (not a JWT) still goes in the api_key slot.
+        if key.count(".") == 2 and key.startswith("eyJ"):
+            return AzureOpenAI(
+                azure_endpoint=endpoint,
+                azure_ad_token=key,
+                api_version=api_version,
+            )
         return AzureOpenAI(
             azure_endpoint=endpoint,
-            api_key=os.environ["AZURE_OPENAI_KEY"],
+            api_key=key,
             api_version=api_version,
         )
     else:

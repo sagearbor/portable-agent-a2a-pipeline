@@ -1,19 +1,17 @@
 """
 GET /api/v1/jira/projects
 
-Proxies a credential check against Jira and returns the list of projects
-the caller has access to.  Credentials are passed as optional query parameters;
-when omitted the server falls back to the JIRA_EMAIL / JIRA_API_TOKEN
-environment variables (server service account).
+Returns the list of Jira projects the signed-in user has access to.
+Authentication is the user's Atlassian OAuth 3LO session — there is no
+service-account fallback, so a request with no valid session returns 401.
 
 Endpoint:
     GET /api/v1/jira/projects?base_url=https://org.atlassian.net
-    GET /api/v1/jira/projects?base_url=https://org.atlassian.net&email=you@org&token=...
 
 Returns:
     200  [{"key": "ST", "name": "Sage Tools"}, ...]
     400  {"detail": "base_url must be an https://....atlassian.net address"}
-    401  {"detail": "Invalid Jira credentials"}
+    401  {"detail": "Sign in to Jira to continue."}
     502  {"detail": "Could not reach Jira: <reason>"}
 
 SSRF mitigation
@@ -31,7 +29,6 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from bot.api.routes._jira_helpers import (
     validate_base_url,
-    get_jira_auth,
     get_jira_request_config,
 )
 
@@ -49,18 +46,16 @@ _validate_base_url = validate_base_url
 async def get_jira_projects(
     request:       Request,
     base_url:      str        = Query(...,  description="Jira base URL, e.g. https://org.atlassian.net"),
-    email:         str | None = Query(None, description="Atlassian account email (Basic-auth fallback only; ignored when OAuth-signed-in)"),
-    token:         str | None = Query(None, description="Jira API token (Basic-auth fallback only; ignored when OAuth-signed-in)"),
     writable_only: bool       = Query(True, description="If true (default), returns only projects where the caller has CREATE_ISSUES permission."),
     recent_only:   bool       = Query(True, description="If true (default), narrows further to projects the user has recently viewed or worked in. Set to false to see every project they can write to."),
 ):
     """
     Return Jira projects the caller can see (and, by default, write to).
 
-    Auth preference order:
-      1. Atlassian OAuth 3LO session (bearer token via api.atlassian.com)
-      2. Caller-supplied email/token query params (Basic auth to the site)
-      3. JIRA_EMAIL / JIRA_API_TOKEN service-account env vars
+    Auth: the signed-in user's Atlassian OAuth 3LO session (bearer token via
+    api.atlassian.com).  Not signed in -> HTTPException(401); there is no
+    service-account fallback, so the list always reflects the user's own
+    Jira permissions.
 
     Filtering (stacked, cheapest → most restrictive):
       - ``writable_only`` (default True)  intersects with projects where
@@ -77,12 +72,8 @@ async def get_jira_projects(
     # -- SSRF guard: validate before any outbound call ---------------------
     base_validated = validate_base_url(base_url)
 
-    # Pick the auth path: OAuth bearer token when signed in, Basic auth otherwise.
+    # OAuth-only: raises 401 if the caller is not signed in.
     cfg = get_jira_request_config(request, base_validated)
-    # If the caller supplied explicit email/token, override the Basic-auth path
-    # (but never override an active OAuth session — the signed-in user is authoritative).
-    if not cfg.signed_in and (email or token):
-        cfg.kwargs["auth"] = get_jira_auth(email, token)
 
     # The full URL is assembled here from a trusted base and a fixed path.
     # No caller-supplied data appears in the path or query string.

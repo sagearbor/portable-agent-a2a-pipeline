@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SageJiraBot — Transcript Processor</title>
+  <!-- Browser tab icon. Relative paths resolve under the reverse-proxy subpath
+       (e.g. /sageapp06/) the same way the sidebar logo <img> does. -->
+  <link rel="icon" type="image/png" sizes="128x128" href="assets/logo-128.png" />
+  <link rel="apple-touch-icon" href="assets/logo-128.png" />
   <!-- MSAL.js 2.x — Azure AD authentication for the SSO sign-in section -->
   <script src="https://alcdn.msauth.net/browser/2.38.3/js/msal-browser.min.js"
           integrity="sha384-DyTmrI62MAdgc25eDND3rgXLoQm8p7vWExNrhlEkwQ9FtMQIoP2n0zTflVr609Lc"
@@ -418,6 +422,11 @@
       padding: 8px 10px;
       border-bottom: 2px solid var(--border);
       background: #f8f9fd;
+      /* Keep the header visible while scrolling the bounded wrapper so the
+         user always knows which column is which. */
+      position: sticky;
+      top: 0;
+      z-index: 3;
     }
 
     .ticket-table th:first-child {
@@ -458,7 +467,7 @@
     .ticket-table .col-check  { width: 36px; text-align: center; }
     .ticket-table .col-sum    { min-width: 200px; }
     .ticket-table .col-pri    { width: 110px; }
-    .ticket-table .col-desc   { min-width: 260px; }
+    .ticket-table .col-desc   { min-width: 210px; }
     .ticket-table .col-del    { width: 70px; text-align: center; }
 
     .ticket-status-badge {
@@ -789,8 +798,8 @@
     .ticket-table .col-epic    { min-width: 150px; }
     .ticket-table .col-effort  { width: 70px; }
     .ticket-table .col-pri     { width: 110px; }
-    .ticket-table .col-start   { width: 130px; }
-    .ticket-table .col-due     { width: 130px; }
+    .ticket-table .col-start   { width: 120px; }
+    .ticket-table .col-due     { width: 120px; }
     .ticket-table .col-deps    { width: 90px; }
     .ticket-table .col-sprint  { min-width: 120px; }
     .ticket-table .col-fixver  { min-width: 120px; }
@@ -802,7 +811,15 @@
     }
     .label-pill.auto { background: #e8f0fe; color: #1a4f9c; }
     .label-pill.user { background: #f0f2f8; color: #4a5066; }
-    .ticket-table-wrap { overflow-x: auto; }
+    /* Bound the height so BOTH scrollbars stay inside the viewport.  The old
+       table was ~1800px wide and as tall as the row count, so the horizontal
+       scrollbar sat below the fold — you had to scroll to the very bottom just
+       to scroll left/right.  Capping the height keeps the horizontal scrollbar
+       on screen, and the sticky header (above) keeps column labels visible. */
+    .ticket-table-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 240px);
+    }
 
     /* Rejected items collapsible */
     .rejected-panel { margin-bottom: 12px; }
@@ -1142,7 +1159,7 @@
       </div>
       <div class="bulk-field">
         <label>Assignee</label>
-        <select id="bulk-assignee"><option value="">—</option></select>
+        <input type="text" id="bulk-assignee" list="assignee-datalist" placeholder="type a name…" autocomplete="off" style="width:150px;" />
       </div>
       <div class="bulk-field">
         <label title="Labels (comma-separated) — applied in addition to any existing labels on each row. Every ticket also gets 'sageJiraBot' and a batch timestamp automatically.">Labels</label>
@@ -1168,6 +1185,9 @@
       </div>
       <button class="bulk-btn" id="bulk-apply-btn">Apply</button>
     </div>
+
+    <!-- Shared autocomplete source for every assignee box (per-row + bulk). -->
+    <datalist id="assignee-datalist"></datalist>
 
     <div class="ticket-table-wrap">
     <table class="ticket-table" id="ticket-table">
@@ -1417,6 +1437,25 @@ function resolveAssigneeIdFromName(name, users) {
 
   // Ambiguous or no match
   return null;
+}
+
+/* Display name for a given accountId (for pre-filling the assignee box). */
+function assigneeDisplayNameById(id) {
+  if (!id) return '';
+  const u = (state.jiraContext.users || []).find(x => x.accountId === id);
+  return u ? u.displayName : '';
+}
+
+/* Populate the shared <datalist> the assignee inputs autocomplete against.
+   One datalist for the whole table (not per-row) keeps the DOM light even when
+   the fallback list is the full ~200-person assignable directory. */
+function refreshAssigneeDatalist() {
+  const dl = document.getElementById('assignee-datalist');
+  if (!dl) return;
+  const users = state.jiraContext.users || [];
+  dl.innerHTML = users
+    .map(u => `<option value="${escHtml(u.displayName)}"></option>`)
+    .join('');
 }
 
 function resolveAssigneesFromNames() {
@@ -1933,6 +1972,10 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
     document.getElementById('section-tickets').style.display = 'block';
     document.getElementById('section-tickets').scrollIntoView({ behavior: 'smooth' });
     updateNavSteps();
+    // Size the table scroll box now and again after the smooth-scroll settles,
+    // so the horizontal scrollbar lands at the bottom of the viewport.
+    sizeTicketTableWrap();
+    setTimeout(sizeTicketTableWrap, 450);
 
   } catch (err) {
     hideAlert(infoEl);
@@ -1945,6 +1988,22 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
 /* =========================================================================
    Section 3 — Ticket Review
 ========================================================================= */
+
+/* Size the ticket table's scroll box so its bottom (and therefore its
+   horizontal scrollbar) sits at the bottom of the viewport, no matter how
+   much content (bulk-apply bar, anchor bar, etc.) sits above it.  A fixed CSS
+   max-height can't do this because the table starts at a variable offset down
+   the page; computing from the live position keeps the horizontal scrollbar
+   reachable without scrolling to the very bottom of all the rows. */
+function sizeTicketTableWrap() {
+  const wrap = document.querySelector('.ticket-table-wrap');
+  if (!wrap || wrap.offsetParent === null) return;   // not visible -> skip
+  const top = wrap.getBoundingClientRect().top;       // px from viewport top
+  const h = window.innerHeight - top - 16;            // leave a small margin
+  wrap.style.maxHeight = Math.max(220, h) + 'px';     // floor so it's usable
+}
+window.addEventListener('resize', sizeTicketTableWrap);
+
 function renderTickets() {
   const tbody = document.getElementById('ticket-tbody');
   tbody.innerHTML = '';
@@ -1967,16 +2026,19 @@ function renderTickets() {
     }
     epicOptions += '<option value="__create_new__">+ Create New Epic...</option>';
 
-    // Build sprint options
-    let sprintOptions = '<option value="">— none —</option>';
-    (state.jiraContext.sprints || []).forEach(s => {
+    // Build sprint options. Empty label makes it clear the project simply has
+    // none configured (vs. looking broken).
+    const _sprints = state.jiraContext.sprints || [];
+    let sprintOptions = `<option value="">${_sprints.length ? '— none —' : '— no sprints in project —'}</option>`;
+    _sprints.forEach(s => {
       const sel = ticket.suggested_sprint_id == s.id ? ' selected' : '';
       sprintOptions += `<option value="${s.id}"${sel}>${escHtml(s.name)}</option>`;
     });
 
-    // Build fix version options
-    let fixverOptions = '<option value="">— none —</option>';
-    (state.jiraContext.fix_versions || []).forEach(v => {
+    // Build fix version options (same empty-state treatment).
+    const _fixvers = state.jiraContext.fix_versions || [];
+    let fixverOptions = `<option value="">${_fixvers.length ? '— none —' : '— no versions in project —'}</option>`;
+    _fixvers.forEach(v => {
       const sel = ticket.suggested_fix_version_id == v.id ? ' selected' : '';
       fixverOptions += `<option value="${escHtml(v.id)}"${sel}>${escHtml(v.name)}</option>`;
     });
@@ -2034,12 +2096,10 @@ function renderTickets() {
         <input type="text" class="extra-labels-input" data-idx="${idx}" value="${escHtml(ticket.extra_labels || '')}" placeholder="add labels..." style="width:80px; font-size:11px;" ${ticket.deleted ? 'disabled' : ''} />
       </td>
       <td class="col-assign">
-        <select class="assignee-select" data-idx="${idx}" ${ticket.deleted ? 'disabled' : ''}>
-          <option value="">— unassigned —</option>
-          ${(state.jiraContext.users || []).map(u =>
-            `<option value="${escHtml(u.accountId)}" ${ticket.suggested_assignee_id === u.accountId ? 'selected' : ''}>${escHtml(u.displayName)}</option>`
-          ).join('')}
-        </select>
+        <input type="text" class="assignee-input" list="assignee-datalist" data-idx="${idx}"
+               value="${escHtml(assigneeDisplayNameById(ticket.suggested_assignee_id))}"
+               placeholder="type a name…" autocomplete="off"
+               ${ticket.deleted ? 'disabled' : ''} />
         ${ticket.suggested_assignee && !ticket.suggested_assignee_id ? `<span class="text-muted" style="font-size:10px; display:block;">Suggested: ${escHtml(ticket.suggested_assignee)}</span>` : ''}
         ${ticket.suggested_assignee && (ticket.assignee_category || typeof ticket.assignee_confidence === 'number') ? `<span class="text-muted" style="font-size:10px; display:block;" title="${escHtml(ticket.assignee_rationale || '')}${ticket.assignee_evidence ? ' — evidence: ' + escHtml(ticket.assignee_evidence) : ''}">Why: ${escHtml(ticket.assignee_category || 'unknown')}${typeof ticket.assignee_confidence === 'number' ? ' &middot; ' + Math.round(ticket.assignee_confidence * 100) + '%' : ''}</span>` : ''}
       </td>
@@ -2156,11 +2216,25 @@ function renderTickets() {
     });
   });
 
-  // Bind assignee select changes
-  tbody.querySelectorAll('.assignee-select').forEach(sel => {
-    sel.addEventListener('change', function () {
+  // Bind assignee type-to-search inputs. The visible text is a display name;
+  // map it back to an accountId. Empty -> unassigned. A non-empty value that
+  // doesn't resolve to a unique person is treated as unassigned (and we clear
+  // the box) so we never submit an invalid/ambiguous assignee.
+  tbody.querySelectorAll('.assignee-input').forEach(inp => {
+    inp.addEventListener('change', function () {
       const idx = parseInt(this.dataset.idx);
-      state.draftTickets[idx].suggested_assignee_id = this.value || null;
+      const typed = this.value.trim();
+      if (!typed) {
+        state.draftTickets[idx].suggested_assignee_id = null;
+        return;
+      }
+      const acct = resolveAssigneeIdFromName(typed, state.jiraContext.users || []);
+      state.draftTickets[idx].suggested_assignee_id = acct;
+      // Normalise the box to the canonical display name (or clear if no match).
+      this.value = acct ? assigneeDisplayNameById(acct) : '';
+      if (!acct) {
+        dbg(5, `[Assignees] "${typed}" did not match a unique assignable user — left unassigned`);
+      }
     });
   });
 
@@ -2187,6 +2261,8 @@ function renderTickets() {
   updateSelectAll();
   renderRejectedPanel();
   populateBulkDropdowns();
+  refreshAssigneeDatalist();  // keep the shared assignee autocomplete in sync
+  sizeTicketTableWrap();   // row count changed -> re-fit the scroll box
 }
 
 /* =========================================================================
@@ -2262,13 +2338,8 @@ function populateBulkDropdowns() {
     _addOption(bulkFixver, v.id, v.name);
   });
 
-  // Assignee
-  const bulkAssignee = document.getElementById('bulk-assignee');
-  bulkAssignee.textContent = '';
-  _addOption(bulkAssignee, '', '\u2014');
-  (state.jiraContext.users || []).forEach(u => {
-    _addOption(bulkAssignee, u.accountId, u.displayName);
-  });
+  // Assignee is a type-to-search <input> backed by #assignee-datalist
+  // (populated by refreshAssigneeDatalist) \u2014 nothing to fill here.
 }
 
 // Show/hide the new epic name input when "Create New Epic" is selected
@@ -2289,7 +2360,11 @@ document.getElementById('bulk-apply-btn').addEventListener('click', function () 
   const newNameInput = document.getElementById('bulk-epic-new-name');
   const sprintVal   = document.getElementById('bulk-sprint').value;
   const fixverVal   = document.getElementById('bulk-fixver').value;
-  const assigneeVal = document.getElementById('bulk-assignee').value;
+  // Bulk assignee is a typed display name -> resolve to an accountId.
+  const assigneeRaw = document.getElementById('bulk-assignee').value.trim();
+  const assigneeVal = assigneeRaw
+    ? resolveAssigneeIdFromName(assigneeRaw, state.jiraContext.users || [])
+    : '';
   const priorityVal = document.getElementById('bulk-priority').value;
   const startVal    = document.getElementById('bulk-start-date').value;
   const dueVal      = document.getElementById('bulk-due-date').value;

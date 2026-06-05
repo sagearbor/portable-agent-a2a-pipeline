@@ -9,7 +9,6 @@ import os
 from urllib.parse import urlparse
 
 from fastapi import HTTPException
-from requests.auth import HTTPBasicAuth
 
 
 # ---------------------------------------------------------------------------
@@ -55,49 +54,28 @@ def validate_base_url(raw: str) -> str:
     return clean
 
 
-def get_jira_auth(
-    email: str | None = None,
-    token: str | None = None,
-) -> HTTPBasicAuth:
-    """
-    Resolve Jira credentials and return an ``HTTPBasicAuth`` instance.
-
-    Caller-supplied *email* / *token* take precedence; when omitted (or
-    empty) the function falls back to the ``JIRA_EMAIL`` and
-    ``JIRA_API_TOKEN`` environment variables.
-
-    Raises ``HTTPException(500)`` if no credentials are available.
-    """
-    resolved_email = (email or "").strip() or os.environ.get("JIRA_EMAIL", "")
-    resolved_token = (token or "").strip() or os.environ.get("JIRA_API_TOKEN", "")
-
-    if not resolved_email or not resolved_token:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "No Jira credentials available.  "
-                "Set JIRA_EMAIL and JIRA_API_TOKEN in the server environment."
-            ),
-        )
-
-    return HTTPBasicAuth(resolved_email, resolved_token)
-
-
 # ---------------------------------------------------------------------------
-# Jira request config — unified auth accessor for Basic + OAuth paths
+# Jira request config — per-user OAuth accessor
 #
-# When the user is signed in via Atlassian OAuth 3LO (see auth_jira.py),
-# requests must:
-#   * use Bearer auth (Authorization header), not Basic
+# The app is OAuth-only.  When the user is signed in via Atlassian OAuth 3LO
+# (see auth_jira.py), Jira requests must:
+#   * use Bearer auth (Authorization header)
 #   * target https://api.atlassian.com/ex/jira/{cloud_id}  (not the site URL)
 #
-# When no OAuth session exists, fall back to the service-account Basic auth
-# against the site URL exactly as before.  This helper returns the full
-# kwargs dict to pass to ``requests.*`` plus the base URL to prepend, so
-# existing routes can switch over with a one-line change:
+# There is intentionally NO service-account fallback: every Jira call is
+# attributed to the signed-in user so their own Jira permissions apply.  A
+# request with no valid session raises HTTPException(401) and the UI prompts
+# the user to sign in.
 #
-#     cfg = get_jira_request_config(request, site_base_url)
+#     cfg = get_jira_request_config(request, site_base_url)   # 401 if not signed in
 #     resp = requests.get(f"{cfg.base}/rest/api/3/project/search", **cfg.kwargs)
+#
+# The previous JIRA_EMAIL/JIRA_API_TOKEN Basic-auth fallback (and the
+# get_jira_auth helper) were removed: they let any visitor read or write Jira
+# as the bot account regardless of their own permissions.  The CLI/pipeline
+# path (core/tools/jira_tool.py) still supports env-var credentials for
+# headless/batch use; see git history if the request-time fallback is ever
+# needed again.
 # ---------------------------------------------------------------------------
 
 from dataclasses import dataclass
@@ -109,22 +87,18 @@ class JiraRequestConfig:
     """Configuration for a Jira REST call: base URL + requests.* kwargs."""
     base: str                    # prefix to concat with /rest/api/3/...
     kwargs: dict[str, Any]       # pass to requests.get/post as **kwargs
-    signed_in: bool              # True when OAuth session is active
+    signed_in: bool              # always True (we raise 401 otherwise)
     principal: str               # email or display name (for logging/UI)
 
 
-def get_jira_request_config(request, site_base_url: str) -> JiraRequestConfig:
+def get_oauth_request_config(request, site_base_url: str) -> JiraRequestConfig:
     """
-    Return the correct (base, kwargs) to call Jira for this request.
-
-    Preference order:
-      1. Atlassian OAuth 3LO session (bearer token, via api.atlassian.com)
-      2. JIRA_EMAIL / JIRA_API_TOKEN service-account Basic auth (site URL)
+    Return the Jira call config for the signed-in user's OAuth session, or
+    raise ``HTTPException(401)`` when there is no valid session.
 
     ``site_base_url`` must already be validated by ``validate_base_url``.
-
-    Not yet used by routes — introduced as scaffolding so the switchover
-    to per-user OAuth is a one-line change per route.
+    It is accepted for signature symmetry (and possible future use) even
+    though OAuth 3LO calls target api.atlassian.com rather than the site URL.
     """
     # Lazy import to avoid circular dependency with auth_jira.py
     try:
@@ -133,29 +107,25 @@ def get_jira_request_config(request, site_base_url: str) -> JiraRequestConfig:
     except Exception:
         sess = None
 
-    if sess and sess.get("access_token") and sess.get("cloud_id"):
-        return JiraRequestConfig(
-            base=f"https://api.atlassian.com/ex/jira/{sess['cloud_id']}",
-            kwargs={
-                "headers": {
-                    "Authorization": f"Bearer {sess['access_token']}",
-                    "Accept":        "application/json",
-                },
-                "timeout": 15,
-            },
-            signed_in=True,
-            principal=sess.get("email") or sess.get("display_name") or "oauth-user",
+    if not (sess and sess.get("access_token") and sess.get("cloud_id")):
+        raise HTTPException(
+            status_code=401,
+            detail="Sign in to Jira to continue.",
         )
 
-    # Fallback: service account Basic auth
-    auth = get_jira_auth()
     return JiraRequestConfig(
-        base=site_base_url,
+        base=f"https://api.atlassian.com/ex/jira/{sess['cloud_id']}",
         kwargs={
-            "auth":    auth,
-            "headers": {"Accept": "application/json"},
+            "headers": {
+                "Authorization": f"Bearer {sess['access_token']}",
+                "Accept":        "application/json",
+            },
             "timeout": 15,
         },
-        signed_in=False,
-        principal=os.environ.get("JIRA_EMAIL", "service-account"),
+        signed_in=True,
+        principal=sess.get("email") or sess.get("display_name") or "oauth-user",
     )
+
+
+# Backwards-compatible alias — existing routes import this name.
+get_jira_request_config = get_oauth_request_config

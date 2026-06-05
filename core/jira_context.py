@@ -13,6 +13,7 @@ import requests
 from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
+from core.agents.llm_json import parse_llm_json
 from core.clients.client import get_client, token_limit_kwarg
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, ENRICH_MODEL
 
@@ -373,17 +374,13 @@ def enrich_draft_tickets(
         print("[jira_context] WARNING: LLM returned empty enrichment response")
         return draft_tickets
 
-    # Strip markdown code fences if present
-    stripped = raw.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.split("\n", 1)[-1]
-        stripped = stripped.rsplit("```", 1)[0].strip()
-
+    # Tolerant parse (fences/prose/trailing commas/empty values). Enrichment is
+    # best-effort: if it still can't be parsed, fall back to the input drafts.
     try:
-        enriched = json.loads(stripped)
-    except json.JSONDecodeError as e:
+        enriched = parse_llm_json(raw, context="jira_context")
+    except (ValueError, json.JSONDecodeError) as e:
         print(f"[jira_context] ERROR: Failed to parse enrichment JSON: {e}")
-        print(f"[jira_context] Raw response (last 200 chars): ...{stripped[-200:]}")
+        print(f"[jira_context] Raw response (last 200 chars): ...{raw.strip()[-200:]}")
         return draft_tickets
 
     # Deterministic carry-forward: re-assert suggested_assignee and the
