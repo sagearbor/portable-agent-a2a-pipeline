@@ -150,7 +150,7 @@ async def health() -> JSONResponse:
         status_code=200,
         content={
             "status": "ok",
-            "version": "0.10.0",
+            "version": "0.10.1",
             "provider": PROVIDER,
             "jira_project": os.environ.get("JIRA_PROJECT_KEY") or None,
         }
@@ -161,7 +161,7 @@ async def health() -> JSONResponse:
 async def ping():
     """Cache-proof version check — new endpoint NGINX has never cached."""
     import datetime
-    return {"v": "0.10.0", "t": datetime.datetime.now().isoformat()}
+    return {"v": "0.10.1", "t": datetime.datetime.now().isoformat()}
 
 
 # ---------------------------------------------------------------------------

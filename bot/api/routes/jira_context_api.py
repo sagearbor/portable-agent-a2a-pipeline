@@ -72,13 +72,12 @@ def _fetch_epics(
             timeout=15,
         )
 
-        if resp.status_code in (401, 403):
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid Jira credentials — check your email and API token.",
-            )
-
         if not resp.ok:
+            # Degrade to an empty section instead of failing the whole context
+            # response.  A 401/403 here means the user's token lacks scope/
+            # permission for /search/jql (granular read:jql:jira et al.) even
+            # though the session itself is valid — the assignee list and other
+            # sections must still load.
             logger.warning("Epic query failed %s: %s", resp.status_code, resp.text[:200])
             return []
 
@@ -124,13 +123,9 @@ def _fetch_sprints(
             timeout=15,
         )
 
-        if board_resp.status_code in (401, 403):
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid Jira credentials — check your email and API token.",
-            )
-
         if not board_resp.ok:
+            # Degrade to no sprints rather than failing the whole context
+            # (401/403 = token lacks board/agile scope; session is still valid).
             logger.warning(
                 "Board lookup failed %s: %s",
                 board_resp.status_code, board_resp.text[:200],
@@ -196,13 +191,9 @@ def _fetch_fix_versions(
             timeout=15,
         )
 
-        if resp.status_code in (401, 403):
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid Jira credentials — check your email and API token.",
-            )
-
         if not resp.ok:
+            # Degrade to no fix versions rather than failing the whole context
+            # (401/403 = token lacks project scope; session is still valid).
             logger.warning(
                 "Fix version query failed %s: %s",
                 resp.status_code, resp.text[:200],
