@@ -388,22 +388,28 @@ def _fetch_project_members(
     headers: dict,
 ) -> list[dict]:
     """
-    Return the list of people to offer in the assignee dropdown.
+    Return the list of people to offer in the assignee picker.
 
-    Primary source is ``user/assignable/search`` (works for any signed-in
-    user with Browse-users permission).  If that yields nothing — e.g. an
-    older endpoint quirk — fall back to scraping project role members, which
-    works when the caller has admin rights (the service account).
+    Preferred source is the project's **role members** — the actual team
+    (typically a handful of people), which is what users expect to assign to.
+    Reading role actors requires the caller to be able to administer the
+    project; when that returns nothing (the caller isn't a project admin, or
+    the roles are group-based), fall back to ``user/assignable/search``, the
+    full set of users who *could* be assigned (org-wide at sites that grant
+    the Assignable-User permission broadly — potentially hundreds).
+
+    The web UI renders this as a type-to-search field, so the broad fallback
+    stays usable while the curated short list is offered whenever available.
     """
-    users = _fetch_assignable_users(base, project_key, auth, headers)
-    if users:
-        return users
+    members = _fetch_role_members(base, project_key, auth, headers)
+    if members:
+        return members
 
     logger.info(
-        "Assignable-user search empty for %s; falling back to role members",
+        "No readable role members for %s; using the assignable-user directory",
         project_key,
     )
-    return _fetch_role_members(base, project_key, auth, headers)
+    return _fetch_assignable_users(base, project_key, auth, headers)
 
 
 # ---------------------------------------------------------------------------
