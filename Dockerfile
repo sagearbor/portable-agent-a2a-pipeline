@@ -18,6 +18,8 @@ EXPOSE 3006
 
 # Run as a non-root user (security best practice — CWE-250)
 RUN adduser --disabled-password --gecos "" botuser
+RUN mkdir -p /app/data && chown botuser:botuser /app/data
+ENV USER_PREFS_PATH=/app/data/user_prefs.json
 USER botuser
 
 # Health check — hits the /health endpoint

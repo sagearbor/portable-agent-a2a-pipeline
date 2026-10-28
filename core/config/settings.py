@@ -107,4 +107,4 @@ MAX_INPUT_FRACTION = 0.6
 # Temperature / shared inference settings
 # ---------------------------------------------------------------------------
 TEMPERATURE = 0.2   # lower = more deterministic, good for routing agents
-MAX_TOKENS  = 16384  # generous default — truncation causes silent failures that waste days debugging
+MAX_TOKENS = 40000  # reasoning and visible output share this completion budget
