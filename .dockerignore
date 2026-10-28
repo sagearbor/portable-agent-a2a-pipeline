@@ -3,6 +3,12 @@ __pycache__/
 *.pyc
 .git/
 .env
+.env.*
+**/.env
+**/.env.*
+*.local.yaml
+**/*.local.yaml
+data/
 tmp/
 docs/
 *.md

@@ -148,7 +148,8 @@ def token_limit_kwarg(model: str, n: int) -> dict:
     """
     newer = ("o1", "o3", "o4", "gpt-5")
     key = "max_completion_tokens" if any(model.startswith(p) for p in newer) else "max_tokens"
-    return {key: n}
+    # Reasoning consumes the completion budget before visible output begins.
+    return {key: max(n, 40000) if key == "max_completion_tokens" else n}
 
 
 def get_client():
