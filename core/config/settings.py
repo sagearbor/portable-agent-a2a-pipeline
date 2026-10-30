@@ -36,7 +36,7 @@ PROVIDER = "azure"  # <-- change this one value to switch everything
 # Model names per provider
 # ---------------------------------------------------------------------------
 MODELS = {
-    "azure":             "gpt-5.2",   # deployment name in your AI Foundry
+    "azure":             "gpt-5.4-mini",  # deployment name in your AI Foundry (gpt-5.2 is not deployed on the POC)
     "azure_responses":   "gpt-5.2",   # same deployment, different protocol (future)
     "openai_responses":  "gpt-4o",    # or o3, gpt-4-turbo, etc
     "openai_chat":       "gpt-4o",
