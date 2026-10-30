@@ -168,3 +168,6 @@ def test_sso_session_user_reaches_telemetry_context():
     c.get("/_test_login")
     c.get("/_test_ctx")
     assert seen["user"] == "jdoe"
+    # A client-sent Easy Auth header is ignored; the verified session wins.
+    c.get("/_test_ctx", headers={"X-MS-CLIENT-PRINCIPAL-NAME": "spoof@duke.edu"})
+    assert seen["user"] == "jdoe"

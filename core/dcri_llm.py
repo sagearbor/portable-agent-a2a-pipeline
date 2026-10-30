@@ -36,7 +36,7 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 SCHEMA_VERSION = 1
 
 __all__ = [
@@ -276,19 +276,26 @@ class llm_action:
 _PRINCIPAL_HEADER = "x-ms-client-principal-name"
 
 
+def _trust_easy_auth() -> bool:
+    # The header is client-controlled unless ACA Easy Auth is enabled (it strips
+    # client-sent copies). Only read it when the app opts in explicitly.
+    return (os.environ.get("TRUST_EASY_AUTH_HEADER") or "").strip().lower() in ("1", "true", "yes")
+
+
 def asgi_middleware(app):
     """ASGI middleware (FastAPI/Starlette): fresh action_id and user per request.
 
-    User comes from the Easy Auth header ``X-MS-CLIENT-PRINCIPAL-NAME`` (only
-    trustworthy when Easy Auth is enabled, which strips client-sent copies),
-    ``@duke.edu`` stripped, else ``anonymous``. Telemetry only; not authorization.
+    User comes from the Easy Auth header ``X-MS-CLIENT-PRINCIPAL-NAME`` only when
+    ``TRUST_EASY_AUTH_HEADER=1`` (set it only on apps with Easy Auth enabled, which
+    strips client-sent copies), ``@duke.edu`` stripped; else ``anonymous``. Apps
+    with their own verified login should call ``set_user`` instead. Telemetry only.
     Use ``app.add_middleware(asgi_middleware)`` or ``app = asgi_middleware(app)``.
     """
     async def middleware(scope, receive, send):
         if scope.get("type") not in ("http", "websocket"):
             return await app(scope, receive, send)
         name = None
-        for k, v in scope.get("headers") or ():
+        for k, v in (scope.get("headers") or ()) if _trust_easy_auth() else ():
             if k.lower() == _PRINCIPAL_HEADER.encode():
                 name = v.decode("latin-1")
                 break
@@ -313,7 +320,8 @@ def wsgi_middleware(wsgi_app):
 
         def run():
             _action_id.set(uuid.uuid4().hex)
-            _user.set(_normalize_user(environ.get("HTTP_X_MS_CLIENT_PRINCIPAL_NAME")))
+            _user.set(_normalize_user(
+                environ.get("HTTP_X_MS_CLIENT_PRINCIPAL_NAME") if _trust_easy_auth() else None))
             _operation.set(None)
             return wsgi_app(environ, start_response)
         return ctx.run(run)
