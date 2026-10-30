@@ -1,0 +1,112 @@
+{
+  "type": "Microsoft.App/containerApps",
+  "name": "sagejirabot",
+  "location": "eastus2",
+  "identity": {
+    "type": "UserAssigned",
+    "userAssignedIdentities": {
+      "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-dcri-dev-ai-aca/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mgd-id-ai-aca-dcri-dev": {}
+    }
+  },
+  "properties": {
+    "managedEnvironmentId": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-dcri-dev-ai-aca/providers/Microsoft.App/managedEnvironments/ace-ai-aca-dcri-dev",
+    "workloadProfileName": "Consumption",
+    "configuration": {
+      "activeRevisionsMode": "Single",
+      "ingress": {
+        "external": true,
+        "targetPort": 3006,
+        "transport": "http",
+        "allowInsecure": false
+      },
+      "registries": [
+        {
+          "server": "acrdcriaiacadev.azurecr.io",
+          "identity": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-dcri-dev-ai-aca/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mgd-id-ai-aca-dcri-dev"
+        }
+      ]
+    },
+    "template": {
+      "containers": [
+        {
+          "name": "sagejirabot",
+          "image": "acrdcriaiacadev.azurecr.io/sagejirabot:<GIT_SHORT_SHA>",
+          "resources": {
+            "cpu": 0.5,
+            "memory": "1.0Gi"
+          },
+          "env": [
+            {
+              "name": "LLM_AUTH",
+              "value": "identity"
+            },
+            {
+              "name": "SOLUTION_NAME",
+              "value": "sagejirabot"
+            },
+            {
+              "name": "AZURE_OPENAI_ENDPOINT",
+              "value": "https://dcri-aifoundry-poc.openai.azure.com/"
+            },
+            {
+              "name": "AZURE_OPENAI_API_VERSION",
+              "value": "2025-03-01-preview"
+            },
+            {
+              "name": "AZURE_CLIENT_ID",
+              "value": "<UAMI_CLIENT_ID>"
+            },
+            {
+              "name": "AGENT1_MODEL",
+              "value": "gpt-5.4-mini"
+            },
+            {
+              "name": "AGENT2_MODEL",
+              "value": "gpt-5.4-mini"
+            },
+            {
+              "name": "AGENT3_MODEL",
+              "value": "gpt-5.4-mini"
+            },
+            {
+              "name": "ENRICH_MODEL",
+              "value": "gpt-5.4-mini"
+            },
+            {
+              "name": "SESSION_COOKIE_SECURE",
+              "value": "true"
+            },
+            {
+              "name": "ATLASSIAN_OAUTH_REDIRECT_URI",
+              "value": "https://sagejirabot.<ACA_ENV_DOMAIN_PREFIX>.eastus2.azurecontainerapps.io/api/v1/auth/jira/callback"
+            }
+          ],
+          "probes": [
+            {
+              "type": "Liveness",
+              "httpGet": {
+                "path": "/health",
+                "port": 3006
+              },
+              "initialDelaySeconds": 15,
+              "periodSeconds": 10
+            },
+            {
+              "type": "Readiness",
+              "httpGet": {
+                "path": "/health",
+                "port": 3006
+              },
+              "initialDelaySeconds": 15,
+              "periodSeconds": 10
+            }
+          ]
+        }
+      ],
+      "scale": {
+        "minReplicas": 1,
+        "maxReplicas": 1
+      }
+    }
+  }
+}

@@ -1515,7 +1515,7 @@ All paths are relative to `/dcri/sasusers/home/scb2/gitRepos/portable-agent-a2a-
 
 | File | Role |
 |---|---|
-| `config/settings.py` | PROVIDER, AZURE_AUTH_MODE, model names — do not modify |
+| `config/settings.py` | PROVIDER, model names — do not modify |
 | `clients/client.py` | `get_client()` factory — all LLM calls go through this |
 | `orchestration/pipeline.py` | `run_pipeline()` — existing email pipeline, reference for pattern |
 | `agents/agent1_email.py` | Email reader agent — AGENT_DEFINITION pattern to follow |

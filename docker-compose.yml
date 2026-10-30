@@ -6,7 +6,7 @@ services:
     environment:
       # Azure AI Foundry (required for LLM calls)
       - AZURE_OPENAI_ENDPOINT=${AZURE_OPENAI_ENDPOINT}
-      - AZURE_OPENAI_V1_BASE_URL=${AZURE_OPENAI_V1_BASE_URL}
+      - SOLUTION_NAME=sagejirabot
       # Jira credentials (required for ticket creation)
       - JIRA_BASE_URL=${JIRA_BASE_URL}
       - JIRA_EMAIL=${JIRA_EMAIL}
@@ -21,9 +21,10 @@ services:
       - BOT_DRY_RUN_DEFAULT=${BOT_DRY_RUN_DEFAULT:-false}
       - BOT_HOST=0.0.0.0
       - BOT_PORT=3006
-      # Auth override for Docker (set by start-docker.sh)
-      - AZURE_AUTH_MODE=${AZURE_AUTH_MODE:-az_login}
-      - AZURE_OPENAI_KEY=${AZURE_OPENAI_KEY:-}
+      # LLM auth (core/dcri_llm.py). The container has no az CLI session and
+      # no managed identity, so the Docker path uses LLM_AUTH=key with
+      # AZURE_OPENAI_API_KEY from .env. Never inject a personal az token.
+      - LLM_AUTH=${LLM_AUTH:-key}
     # .env file is NOT baked into the image — it is loaded at runtime
     # For local dev: docker-compose will pick up .env automatically
     env_file:

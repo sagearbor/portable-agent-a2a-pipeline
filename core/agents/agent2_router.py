@@ -13,7 +13,10 @@ In Phase 2 this becomes a real Azure agent that receives a thread message.
 
 import json
 from core.agents.llm_json import parse_llm_json
-from core.clients.client import get_client, token_limit_kwarg
+from core.clients.client import (
+    get_client, token_limit_kwarg, output_token_kwarg, completion_text,
+)
+from core.dcri_llm import llm_action
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, AGENT2_MODEL
 
 AGENT_DEFINITION = {
@@ -58,34 +61,30 @@ def run(email_extracts: list[dict]) -> dict:
 
     input_text = f"Here are the extracts to evaluate:\n{json.dumps(email_extracts, indent=2)}"
 
-    if PROVIDER in ("openai_responses", "azure_responses"):
-        response = client.responses.create(
-            model=model,
-            instructions=AGENT_DEFINITION["instructions"],
-            input=input_text,
-            temperature=TEMPERATURE,
-        )
-        raw = response.output_text
+    with llm_action("agent2_route"):
+        if PROVIDER in ("openai_responses", "azure_responses"):
+            response = client.responses.create(
+                model=model,
+                instructions=AGENT_DEFINITION["instructions"],
+                input=input_text,
+                temperature=TEMPERATURE,
+                **output_token_kwarg(model, MAX_TOKENS),
+            )
+        else:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": AGENT_DEFINITION["instructions"]},
+                    {"role": "user",   "content": input_text},
+                ],
+                temperature=TEMPERATURE,
+                **token_limit_kwarg(model, MAX_TOKENS),
+            )
 
-    else:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": AGENT_DEFINITION["instructions"]},
-                {"role": "user",   "content": input_text},
-            ],
-            temperature=TEMPERATURE,
-            **token_limit_kwarg(model, MAX_TOKENS),
-        )
-        raw = response.choices[0].message.content
+    # Raises on finish_reason=length / content filter / empty output.
+    raw = completion_text(response, where="agent2")
 
-    # Guard against empty / None LLM responses
-    if not raw:
-        raise RuntimeError(
-            f"[agent2] LLM returned empty content. Possible content filter or token limit issue."
-        )
-
-    print(f"[agent2] Raw LLM response (first 300 chars): {raw.strip()[:300]}")
+    print(f"[agent2] LLM response received ({len(raw)} chars)")
     # Tolerant parse (fences/prose/trailing commas/empty values).
     parsed = parse_llm_json(raw, context="agent2")
 
@@ -125,14 +124,6 @@ def run(email_extracts: list[dict]) -> dict:
                 if field in src and src[field] not in (None, ""):
                     item[field] = src[field]
 
-    print(f"[agent2] Approved {len(approved)} items for ticket creation")
-    for item in approved:
-        print(f"  -> {item.get('suggested_jira_summary', '?')}  [{item.get('suggested_priority', '?')}]")
-    if rejected:
-        print(f"[agent2] Rejected {len(rejected)} items:")
-        for item in rejected:
-            reason = item.get('routing_reason', 'no reason given')
-            summary = item.get('suggested_jira_summary', item.get('summary', '?'))
-            print(f"  x  {summary} — {reason}")
+    print(f"[agent2] Approved {len(approved)} items, rejected {len(rejected)} items")
 
     return {"approved": approved, "rejected": rejected}

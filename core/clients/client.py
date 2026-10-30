@@ -4,137 +4,49 @@ Import get_client() anywhere in agent code - it reads PROVIDER from settings
 and returns the right configured client without the caller needing to know.
 
 Usage:
-    from core.clients.client import get_client
+    from core.clients.client import get_client, completion_text
+    from core.dcri_llm import llm_action
     client, model = get_client()
+    with llm_action("my_operation"):
+        response = client.chat.completions.create(...)
+    text = completion_text(response, where="my_operation")
+
+Auth and telemetry for the Azure providers come from the vendored shared
+module ``core/dcri_llm.py``:
+  - On Azure Container Apps it signs in with the app's user-assigned managed
+    identity (``AZURE_CLIENT_ID``); locally it uses your ``az login`` session.
+    No API key is needed. ``LLM_AUTH=key`` (+ ``AZURE_OPENAI_API_KEY``) is the
+    only key path, for colleagues without an identity.
+  - Every chat.completions / responses call emits one ``llm_call`` JSON line
+    (token counts, finish_reason, latency; never prompt or completion text).
 """
 
 import os
+
 from dotenv import load_dotenv
-from core.config.settings import PROVIDER, MODELS, AZURE_AUTH_MODE
+
+from core import dcri_llm
+from core.config.settings import PROVIDER, MODELS
 
 load_dotenv()
 
 
-def _get_azure_credential():
-    """
-    Returns the right Azure credential based on AZURE_AUTH_MODE.
-
-    az_login          -> AzureCliCredential (your personal 'az login' session).
-
-    managed_identity  -> ManagedIdentityCredential(client_id=AZURE_CLIENT_ID)
-                         when AZURE_CLIENT_ID is set, otherwise
-                         DefaultAzureCredential.
-
-    Why the AZURE_CLIENT_ID branch matters (IMPORTANT for Azure Container Apps):
-        A *user-assigned* managed identity (UAMI) is ambiguous — one host can
-        have several attached, so DefaultAzureCredential cannot guess which to
-        use and may fail or pick the wrong one. IT's ACA environment uses a
-        UAMI, so set AZURE_CLIENT_ID to that identity's **client ID** and this
-        binds to it explicitly. A *system-assigned* identity needs no client
-        ID — leave AZURE_CLIENT_ID unset and DefaultAzureCredential finds it.
-    """
-    if AZURE_AUTH_MODE == "az_login":
-        from azure.identity import AzureCliCredential
-        return AzureCliCredential()
-
-    # managed_identity: bind to the user-assigned identity when its client ID
-    # is provided; otherwise fall back to the default credential chain
-    # (system-assigned identity, env credentials, etc.).
-    client_id = (os.environ.get("AZURE_CLIENT_ID") or "").strip()
-    if client_id:
-        from azure.identity import ManagedIdentityCredential
-        return ManagedIdentityCredential(client_id=client_id)
-    from azure.identity import DefaultAzureCredential
-    return DefaultAzureCredential()
-
-
-def _build_azure_responses_client():
-    """
-    Builds an OpenAI client for the Azure v1 Responses API.
-
-    Uses the /openai/v1/ base URL which:
-    - Does NOT require api_version
-    - Supports client.responses.create()
-    - Works with gpt-5.x and all newer models
-    - Token scope is https://ai.azure.com/.default (different from Chat Completions)
-
-    Requires AZURE_OPENAI_V1_BASE_URL in .env.
-    """
-    from openai import OpenAI
-    base_url = os.environ["AZURE_OPENAI_V1_BASE_URL"]
-    credential = _get_azure_credential()
-    # Get a fresh bearer token. Pipeline completes in <60s so no refresh needed.
-    token = credential.get_token("https://ai.azure.com/.default").token
-    return OpenAI(base_url=base_url, api_key=token)
+class LLMOutputError(RuntimeError):
+    """The model returned no usable output (truncated, filtered or empty)."""
 
 
 def _build_azure_client():
+    """AzureOpenAI client with managed-identity auth and per-call telemetry.
+
+    The same client serves Chat Completions (``azure``) and the Responses API
+    (``azure_responses``): dcri_llm's default api_version supports both.
     """
-    Builds an AzureOpenAI client using either managed identity or API key,
-    controlled by AZURE_AUTH_MODE in settings.py.
-
-    az_login:
-        Uses AzureCliCredential - explicitly uses your 'az login' session.
-        Best for local dev on an Azure VM where DefaultAzureCredential would
-        pick up the VM's managed identity instead of your personal login.
-        Requires: az login to have been run.
-
-    managed_identity:
-        Uses the container's assigned managed identity (no keys, no tokens).
-        For a USER-assigned identity (the UAMI on Azure Container Apps) you
-        MUST also set AZURE_CLIENT_ID to that identity's client ID — see
-        _get_azure_credential(). For a system-assigned identity, leave it unset.
-        WARNING: on a dev VM this authenticates as the VM, not you.
-
-    api_key:
-        Uses AZURE_OPENAI_KEY from .env.
-        Simpler for initial local testing.
-        Do not use for production or with real data if you can avoid it.
-    """
-    from openai import AzureOpenAI
-    endpoint   = os.environ["AZURE_OPENAI_ENDPOINT"]
-    api_version = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-01-01-preview")
-
-    if AZURE_AUTH_MODE in ("az_login", "managed_identity"):
-        from azure.identity import get_bearer_token_provider
-        token_provider = get_bearer_token_provider(
-            _get_azure_credential(),
-            "https://cognitiveservices.azure.com/.default"
-        )
-        return AzureOpenAI(
-            azure_endpoint=endpoint,
-            azure_ad_token_provider=token_provider,
-            api_version=api_version,
-        )
-    elif AZURE_AUTH_MODE == "api_key":
-        key = os.environ["AZURE_OPENAI_KEY"]
-        # The Docker dev workaround (start-docker.sh) injects an Azure AD
-        # *bearer token* (a JWT) as AZURE_OPENAI_KEY because the container can't
-        # run `az login`. Cognitive Services rejects an AAD token sent in the
-        # `api-key` header (401 "invalid subscription key"), so when the value
-        # is a JWT, pass it as azure_ad_token (-> Authorization: Bearer) instead.
-        # A real resource key (not a JWT) still goes in the api_key slot.
-        if key.count(".") == 2 and key.startswith("eyJ"):
-            return AzureOpenAI(
-                azure_endpoint=endpoint,
-                azure_ad_token=key,
-                api_version=api_version,
-            )
-        return AzureOpenAI(
-            azure_endpoint=endpoint,
-            api_key=key,
-            api_version=api_version,
-        )
-    else:
-        raise ValueError(
-            f"Unknown AZURE_AUTH_MODE '{AZURE_AUTH_MODE}'. "
-            "Valid options: 'az_login', 'managed_identity', 'api_key'"
-        )
+    return dcri_llm.make_client()
 
 
 def token_limit_kwarg(model: str, n: int) -> dict:
     """
-    Returns the correct token-limit kwarg for the given model as a dict.
+    Returns the correct Chat Completions token-limit kwarg for the model.
 
     Newer models (o1, o3, gpt-5.x) require 'max_completion_tokens'.
     Older models (gpt-4, gpt-3.5, gpt-4o) use 'max_tokens'.
@@ -149,36 +61,69 @@ def token_limit_kwarg(model: str, n: int) -> dict:
     newer = ("o1", "o3", "o4", "gpt-5")
     key = "max_completion_tokens" if any(model.startswith(p) for p in newer) else "max_tokens"
     # Reasoning consumes the completion budget before visible output begins.
-    return {key: max(n, 40000) if key == "max_completion_tokens" else n}
+    floor = dcri_llm.DEFAULT_MAX_COMPLETION_TOKENS
+    return {key: max(n, floor) if key == "max_completion_tokens" else n}
+
+
+def output_token_kwarg(model: str, n: int) -> dict:
+    """Responses API equivalent of token_limit_kwarg (``max_output_tokens``).
+
+    Reasoning models (gpt-5.x, o-series) never get less than 40000.
+    """
+    limit = token_limit_kwarg(model, n)
+    return {"max_output_tokens": next(iter(limit.values()))}
+
+
+def completion_text(response, *, where: str) -> str:
+    """Return the text of a chat.completions or responses result, or raise.
+
+    A truncated (finish_reason=length), content-filtered or empty response is
+    an error the caller must surface, never a silent success. Only lengths and
+    the finish_reason go into the error message; never the output text.
+    """
+    if hasattr(response, "choices"):
+        info = dcri_llm.usage_from_chat_json(response)
+        choices = response.choices or []
+        text = (choices[0].message.content if choices else None) or ""
+    else:
+        info = dcri_llm.usage_from_responses_json(response)
+        text = getattr(response, "output_text", None) or ""
+
+    finish = info.get("finish_reason")
+    if finish == "length":
+        raise LLMOutputError(
+            f"[{where}] LLM output truncated (finish_reason=length, "
+            f"output_chars={len(text)}, reasoning_tokens={info.get('reasoning_tokens')}). "
+            "The completion budget ran out; split the input or raise the budget."
+        )
+    if finish == "content_filter":
+        raise LLMOutputError(f"[{where}] LLM output blocked by content filter.")
+    if not text.strip():
+        raise LLMOutputError(f"[{where}] LLM returned empty output (finish_reason={finish}).")
+    return text
 
 
 def get_client():
     """
     Returns (client, model_name) tuple for the configured PROVIDER.
 
-    azure:            AzureOpenAI client  - Chat Completions - safe for Duke Health data
-    azure_responses:  NOT YET VALID       - raises NotImplementedError
-    openai_responses: OpenAI client       - Responses API    - NOT for Duke Health data
-    openai_chat:      OpenAI client       - Chat Completions - NOT for Duke Health data
+    azure:            AzureOpenAI client - Chat Completions - safe for Duke Health data
+    azure_responses:  AzureOpenAI client - Responses API    - safe for Duke Health data
+    openai_responses: OpenAI client      - Responses API    - NOT for Duke Health data
+    openai_chat:      OpenAI client      - Chat Completions - NOT for Duke Health data
+
+    Every client returned is dcri_llm-instrumented (one telemetry event per call).
     """
 
     model = MODELS[PROVIDER]
 
-    if PROVIDER == "azure":
+    if PROVIDER in ("azure", "azure_responses"):
         return _build_azure_client(), model
 
-    elif PROVIDER == "azure_responses":
-        return _build_azure_responses_client(), model
-
-    elif PROVIDER == "openai_responses":
+    elif PROVIDER in ("openai_responses", "openai_chat"):
         from openai import OpenAI
         client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        return client, model
-
-    elif PROVIDER == "openai_chat":
-        from openai import OpenAI
-        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-        return client, model
+        return dcri_llm.instrument(client), model
 
     else:
         raise ValueError(

@@ -81,7 +81,7 @@ Copy the env template and fill in your values:
 cp .env.example .env
 # Edit .env:
 #   AZURE_OPENAI_ENDPOINT is required for azure providers
-#   AZURE_OPENAI_KEY only needed if AZURE_AUTH_MODE=api_key
+#   AZURE_OPENAI_API_KEY only needed if LLM_AUTH=key (default: identity via az login)
 #   OPENAI_API_KEY needed for openai_responses or openai_chat providers
 ```
 

@@ -2,25 +2,19 @@
 # Ensure PATH includes az CLI and docker (needed when run from cron)
 export PATH="/dcri/sasusers/home/scb2/.local/bin:/usr/bin:/usr/local/bin:$PATH"
 
-# start-docker.sh — Launch SageJiraBot in Docker with Azure auth
+# start-docker.sh — Launch SageJiraBot in Docker (legacy dev-VM path)
 #
-# On a dev VM, 'az login' tokens can't be used inside Docker (no az CLI).
-# This script fetches a bearer token from az CLI and passes it as
-# AZURE_OPENAI_KEY so the container can use api_key auth mode.
-#
-# The Azure token lasts ~1 hour, so the container must be recreated to inject
-# a fresh one. A cron does that every 45 min (see `crontab -l`). Because the
-# token is an env var set at container-creation time, "refresh the token" and
-# "restart the container" are the same operation.
+# LLM auth is handled by core/dcri_llm.py. The container has no az CLI session
+# and no managed identity, so this path needs LLM_AUTH=key and
+# AZURE_OPENAI_API_KEY in .env. (It used to fetch the *personal* `az login`
+# token of whoever ran it and inject it as the "key"; that is gone: no personal
+# identity is ever used as the app's credential.) The preferred deployment is
+# Azure Container Apps with the shared managed identity.
 #
 # ONE COMMAND for every situation — just run `./start-docker.sh`:
-#   * Cron token refresh (no code changed) -> recreates container, NO rebuild.
-#   * After you edit code                  -> auto-detects the change, rebuilds,
-#                                             then recreates.
+#   * After you edit code -> auto-detects the change, rebuilds, then recreates.
 #   * Force a clean rebuild (e.g. new deps in requirements.txt that Docker's
 #     layer cache is holding stale) -> `./start-docker.sh rebuild` (no-cache).
-#
-# You should never need to remember a flag for normal use.
 
 set -euo pipefail
 
@@ -43,32 +37,14 @@ fi
 SERVICE="sagejirabot"
 
 # ---------------------------------------------------------------------------
-# Azure bearer token (api_key mode for Docker — see header)
-# ---------------------------------------------------------------------------
-echo "Fetching Azure bearer token from az CLI..."
-AZURE_TOKEN=$(az account get-access-token \
-  --resource https://cognitiveservices.azure.com \
-  --query accessToken -o tsv)
-
-if [ -z "$AZURE_TOKEN" ]; then
-  echo "ERROR: Could not get Azure token. Run 'az login' first." >&2
-  exit 1
-fi
-echo "Token obtained (expires in ~1 hour)"
-
-export AZURE_OPENAI_KEY="$AZURE_TOKEN"
-export AZURE_AUTH_MODE="api_key"
-
-# ---------------------------------------------------------------------------
 # Decide whether to rebuild the image.
 #
 #   needs_build == 0 (true)  when there is no image yet, or any build input
 #                            (Dockerfile / requirements.txt / bot/ / core/) is
 #                            newer than the currently-built image.
 #
-# This is what makes ONE command correct for both cron and dev: cron runs see
-# no source change and skip the rebuild (fast token refresh); a run right after
-# you save a file rebuilds automatically.
+# A run right after you save a file rebuilds automatically; otherwise the
+# existing image is reused.
 # ---------------------------------------------------------------------------
 needs_build() {
   local image_id img_epoch newest_src
@@ -93,16 +69,13 @@ if [ "$MODE" = "rebuild" ]; then
   "${DC[@]}" build --no-cache "$SERVICE"
 elif needs_build; then
   echo "Source changed since the last image — rebuilding..."
-  # If the build fails (e.g. a half-saved edit when cron fires), keep going:
-  # we still recreate the container below with the EXISTING image so the token
-  # refresh never gets blocked by a transient build error.
+  # If the build fails (e.g. a half-saved edit), keep going with the EXISTING image.
   "${DC[@]}" build "$SERVICE" || echo "WARN: build failed — recreating with the existing image."
 else
-  echo "No source changes — skipping rebuild (token refresh only)."
+  echo "No source changes — skipping rebuild."
 fi
 
-# --force-recreate guarantees the container is recreated so the freshly-fetched
-# token is injected, even when the image itself didn't change.
+# --force-recreate picks up .env changes even when the image didn't change.
 echo "Starting SageJiraBot on port 3006..."
 "${DC[@]}" up -d --force-recreate "$SERVICE"
 

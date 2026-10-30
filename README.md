@@ -82,19 +82,19 @@ OpenAI providers send data outside the Duke tenant.
 
 ## Azure Authentication
 
-For Azure providers, authentication is controlled by `AZURE_AUTH_MODE` in `config/settings.py`:
+All Azure OpenAI calls go through `get_client()` (`core/clients/client.py`),
+which builds the client with the vendored shared module `core/dcri_llm.py`:
 
-### `managed_identity` (recommended)
-No API key needed. Uses `DefaultAzureCredential` which automatically checks:
-1. Your `az login` session (when running locally on your machine)
-2. Managed Identity assigned to the Azure resource (when deployed to Azure)
-3. Environment variables (CI/CD pipelines)
+- **Locally:** your `az login` session (AzureCliCredential).
+- **On Azure Container Apps:** the user-assigned managed identity named by
+  `AZURE_CLIENT_ID`. No API key, no secret.
+- **`LLM_AUTH=key`** (+ `AZURE_OPENAI_API_KEY`) is the only key path, for
+  colleagues without an identity.
 
-Same code runs locally and in production without any changes.
-
-### `api_key`
-Uses `AZURE_OPENAI_KEY` from `.env`. Simpler for initial testing but keys
-can leak and must be rotated manually. Avoid for anything touching real data.
+Every LLM call also prints one `{"event":"llm_call","schema":1,...}` line
+(token counts, finish_reason, latency, user NetID; never prompt or completion
+text). Do not edit `core/dcri_llm.py`; re-copy it from
+`mvp_landing_page/packages/dcri_llm/` when it changes upstream.
 
 ---
 

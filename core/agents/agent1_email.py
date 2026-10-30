@@ -11,7 +11,10 @@ A2A output: list of dicts, one per email, with extracted fields.
 
 import json
 from core.agents.llm_json import parse_llm_json
-from core.clients.client import get_client, token_limit_kwarg
+from core.clients.client import (
+    get_client, token_limit_kwarg, output_token_kwarg, completion_text,
+)
+from core.dcri_llm import llm_action
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, AGENT1_MODEL
 from core.tools.outlook_tool import read_emails
 
@@ -162,38 +165,30 @@ def _extract_from_emails(emails: list[dict]) -> list[dict]:
     model = AGENT1_MODEL or default_model
     print(f"[agent1] Calling LLM ({model}) to extract structure...")
 
-    if PROVIDER in ("openai_responses", "azure_responses"):
-        response = client.responses.create(
-            model=model,
-            instructions=instructions,
-            input=user_content,
-            temperature=TEMPERATURE,
-        )
-        raw = response.output_text
+    with llm_action("agent1_extract"):
+        if PROVIDER in ("openai_responses", "azure_responses"):
+            response = client.responses.create(
+                model=model,
+                instructions=instructions,
+                input=user_content,
+                temperature=TEMPERATURE,
+                **output_token_kwarg(model, MAX_TOKENS),
+            )
+        else:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": instructions},
+                    {"role": "user",   "content": user_content},
+                ],
+                temperature=TEMPERATURE,
+                **token_limit_kwarg(model, MAX_TOKENS),
+            )
 
-    else:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": instructions},
-                {"role": "user",   "content": user_content},
-            ],
-            temperature=TEMPERATURE,
-            **token_limit_kwarg(model, MAX_TOKENS),
-        )
-        raw = response.choices[0].message.content
-        finish = response.choices[0].finish_reason
-        if finish == "length":
-            print(f"[agent1] WARNING: response truncated (finish_reason=length). "
-                  f"Raw length={len(raw or '')}. Increase MAX_TOKENS or split the transcript.")
+    # Raises on finish_reason=length / content filter / empty output.
+    raw = completion_text(response, where="agent1")
 
-    # Guard against empty / None LLM responses
-    if not raw:
-        raise RuntimeError(
-            f"[agent1] LLM returned empty content. Possible content filter or token limit issue."
-        )
-
-    print(f"[agent1] Raw LLM response (first 300 chars): {raw.strip()[:300]}")
+    print(f"[agent1] LLM response received ({len(raw)} chars)")
     # Tolerant parse: handles ```json fences, surrounding prose, trailing
     # commas and empty values that strict json.loads would reject.
     parsed = parse_llm_json(raw, context="agent1")
@@ -298,7 +293,7 @@ def apply_meeting_directives(items: list[dict], directives: list[dict]) -> list[
                     if t.get("assignee_confidence") in (None, 0, 0.0):
                         t["assignee_confidence"] = 0.8
                     count += 1
-            print(f"[directives] assign_all: set '{value}' on {count} item(s) with blank assignee")
+            print(f"[directives] assign_all: set assignee on {count} item(s) with blank assignee")
 
         elif action == "set_priority" and value:
             hit = 0

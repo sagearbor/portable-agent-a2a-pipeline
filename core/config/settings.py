@@ -10,8 +10,8 @@ Options:
 
   "azure_responses"   - Azure AI Foundry endpoint, Responses API (v1, GA 2026)
                         Safe for Duke Health data + stateful threads.
-                        Uses /openai/v1/ base URL — no api_version needed.
-                        Requires AZURE_OPENAI_V1_BASE_URL in .env.
+                        Uses dcri_llm's api_version (2025-04-01-preview default).
+                        Same AzureOpenAI client as "azure" (core/dcri_llm.py).
                         Supports gpt-5.x and all modern models.
 
   "openai_responses"  - OpenAI.com endpoint, Responses API protocol
@@ -65,25 +65,10 @@ AGENT3_MODEL = (os.environ.get("AGENT3_MODEL") or "").strip() or None
 ENRICH_MODEL = (os.environ.get("ENRICH_MODEL") or "").strip() or None
 
 # ---------------------------------------------------------------------------
-# Azure authentication mode (only applies to azure / azure_responses providers)
+# Azure authentication: handled entirely by core/dcri_llm.py (managed identity
+# on ACA via AZURE_CLIENT_ID, `az login` locally; LLM_AUTH=key is the only key
+# path). There is deliberately no auth-mode switch here.
 # ---------------------------------------------------------------------------
-# "az_login"         - uses your 'az login' session explicitly (AzureCliCredential).
-#     Best for local dev on an Azure VM, where DefaultAzureCredential would
-#     otherwise pick up the VM's managed identity instead of your personal login.
-#     Requires: az login to have been run in this terminal session.
-#
-# "managed_identity" - uses DefaultAzureCredential which checks (in order):
-#     1. Environment variables AZURE_CLIENT_ID / AZURE_CLIENT_SECRET / AZURE_TENANT_ID
-#     2. Workload Identity
-#     3. Managed Identity (VM, App Service, Container) ← picks this up first on a VM!
-#     4. Your 'az login' session
-#   Use this in production containers where a managed identity is assigned.
-#   WARNING: on a dev VM this will authenticate as the VM's identity, not you.
-#
-# "api_key"          - uses AZURE_OPENAI_KEY from .env
-#     Simpler for quick local testing. Never commit the key.
-#
-AZURE_AUTH_MODE = os.environ.get("AZURE_AUTH_MODE", "az_login")  # "az_login" | "managed_identity" | "api_key"
 
 # ---------------------------------------------------------------------------
 # Model context window sizes (input tokens)

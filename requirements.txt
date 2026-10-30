@@ -1,6 +1,7 @@
 openai>=1.30.0,<3        # pin major: 3.x may break the AzureOpenAI client usage
 python-dotenv>=1.0.0
-azure-identity>=1.15.0     # DefaultAzureCredential for managed identity auth
+azure-identity>=1.15.0     # managed-identity auth via core/dcri_llm.py
+azure-storage-blob>=12.19.0  # dcri_llm telemetry Blob sink + series defaults store
 azure-ai-projects>=1.0.0   # Azure AI Foundry Projects SDK (agent management)
 requests>=2.31.0           # Jira REST API and Microsoft Graph API calls
 fastmcp>=3.0.0             # MCP server framework for tool wrapping
