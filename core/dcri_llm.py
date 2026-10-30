@@ -36,13 +36,13 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 SCHEMA_VERSION = 1
 
 __all__ = [
     "__version__", "SCHEMA_VERSION", "SCOPE", "DEFAULT_API_VERSION",
     "DEFAULT_MAX_COMPLETION_TOKENS", "REASONING_BUDGET_FLOOR", "PRICE_TABLE_DATE",
-    "get_credential", "get_token_provider", "get_bearer_token", "make_client",
+    "get_credential", "get_token_provider", "get_bearer_token", "auth_headers", "make_client",
     "instrument", "record_llm_call", "usage_from_responses_json",
     "usage_from_chat_json", "litellm_callbacks", "litellm_metadata",
     "llm_action", "set_user", "current_context", "asgi_middleware",
@@ -145,6 +145,27 @@ def get_bearer_token() -> str:
     return get_token_provider()()
 
 
+def _auth_mode() -> str:
+    auth = (os.environ.get("LLM_AUTH") or "identity").strip().lower()
+    if auth not in ("identity", "key"):
+        raise RuntimeError("dcri_llm: LLM_AUTH must be 'identity' or 'key'")
+    return auth
+
+
+def auth_headers() -> dict:
+    """Return auth headers for raw ``requests`` callers, honouring ``LLM_AUTH``.
+
+    ``identity`` (default): ``{"Authorization": "Bearer <token>"}``.
+    ``key``: ``{"api-key": AZURE_OPENAI_API_KEY}``. Call per request; never log it.
+    """
+    if _auth_mode() == "key":
+        key = os.environ.get("AZURE_OPENAI_API_KEY")
+        if not key:
+            raise RuntimeError("dcri_llm: LLM_AUTH=key but AZURE_OPENAI_API_KEY is not set")
+        return {"api-key": key}
+    return {"Authorization": "Bearer " + get_bearer_token()}
+
+
 def make_client(*, async_: bool = False, **kw):
     """Return an instrumented ``AzureOpenAI`` (or ``AsyncAzureOpenAI``) client.
 
@@ -159,16 +180,14 @@ def make_client(*, async_: bool = False, **kw):
     if not kw["azure_endpoint"]:
         raise RuntimeError("dcri_llm: set AZURE_OPENAI_ENDPOINT")
     if "api_key" not in kw and "azure_ad_token_provider" not in kw and "azure_ad_token" not in kw:
-        auth = (os.environ.get("LLM_AUTH") or "identity").strip().lower()
+        auth = _auth_mode()
         if auth == "key":
             key = os.environ.get("AZURE_OPENAI_API_KEY")
             if not key:
                 raise RuntimeError("dcri_llm: LLM_AUTH=key but AZURE_OPENAI_API_KEY is not set")
             kw["api_key"] = key
-        elif auth == "identity":
-            kw["azure_ad_token_provider"] = get_token_provider()
         else:
-            raise RuntimeError("dcri_llm: LLM_AUTH must be 'identity' or 'key'")
+            kw["azure_ad_token_provider"] = get_token_provider()
     cls = AsyncAzureOpenAI if async_ else AzureOpenAI
     return instrument(cls(**kw))
 

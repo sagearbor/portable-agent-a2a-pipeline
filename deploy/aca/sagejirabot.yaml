@@ -45,6 +45,10 @@
               "value": "sagejirabot"
             },
             {
+              "name": "TELEMETRY_BLOB_ACCOUNT_URL",
+              "value": "<STORAGE_BLOB_ENDPOINT from ~/dcri/azure-environment.md>"
+            },
+            {
               "name": "AZURE_OPENAI_ENDPOINT",
               "value": "https://dcri-aifoundry-poc.openai.azure.com/"
             },
