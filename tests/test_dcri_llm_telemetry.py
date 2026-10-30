@@ -43,7 +43,7 @@ class _FakeCompletions:
 
 def _fake_client(response):
     fake = SimpleNamespace(
-        base_url="https://dcri-aifoundry-poc.openai.azure.com/openai/",
+        base_url="https://example-foundry.openai.azure.com/openai/",
         chat=SimpleNamespace(completions=_FakeCompletions(response)),
     )
     return dcri_llm.instrument(fake)
@@ -83,7 +83,7 @@ def test_agent2_call_emits_schema_v1_event_without_prompt_text(monkeypatch, caps
     assert ev["max_completion_tokens"] == 40000
     assert ev["budget_below_floor"] is False
     assert ev["finish_reason"] == "stop"
-    assert ev["endpoint_host"] == "dcri-aifoundry-poc.openai.azure.com"
+    assert ev["endpoint_host"] == "example-foundry.openai.azure.com"
     # No prompt text in the event, and none printed anywhere to stdout.
     assert PROMPT_MARKER not in json.dumps(ev)
     assert PROMPT_MARKER not in out
@@ -171,3 +171,16 @@ def test_sso_session_user_reaches_telemetry_context():
     # A client-sent Easy Auth header is ignored; the verified session wins.
     c.get("/_test_ctx", headers={"X-MS-CLIENT-PRINCIPAL-NAME": "spoof@duke.edu"})
     assert seen["user"] == "jdoe"
+
+
+@pytest.mark.parametrize("content,finish", [('{"x": [', "length"), (None, "stop")])
+def test_enrichment_falls_back_to_drafts_on_length_or_empty(monkeypatch, capsys, content, finish):
+    from core import jira_context
+    fake = _fake_client(_chat_response(content, finish_reason=finish))
+    monkeypatch.setattr(jira_context, "get_client", lambda: (fake, "gpt-5.4-mini"))
+    drafts = [{"ticket_id": "t1", "summary": PROMPT_MARKER}]
+    assert jira_context.enrich_draft_tickets(drafts, [], []) is drafts
+    out, events = _events(capsys)
+    assert events[0]["operation"] == "enrich_drafts"
+    assert events[0]["finish_reason"] == finish
+    assert PROMPT_MARKER not in out

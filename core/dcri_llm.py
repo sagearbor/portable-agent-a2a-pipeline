@@ -36,7 +36,7 @@ import uuid
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-__version__ = "1.2.0"
+__version__ = "1.2.1"
 SCHEMA_VERSION = 1
 
 __all__ = [
@@ -478,9 +478,18 @@ _stats = {"emitted": 0, "emit_errors": 0, "blob_queued": 0, "blob_dropped": 0,
 _extra_sinks = []
 
 
+_stats_lock = threading.Lock()
+
+
+def _bump(key, n=1):
+    with _stats_lock:
+        _stats[key] = _stats.get(key, 0) + n
+
+
 def telemetry_stats() -> dict:
     """Counters: emitted, emit_errors, blob_queued/_dropped/_written/_errors."""
-    return dict(_stats)
+    with _stats_lock:
+        return dict(_stats)
 
 
 def add_sink(fn):
@@ -502,18 +511,26 @@ class _BlobSink:
         self.container_name = container
         self.q = queue.Queue(maxsize=maxsize)
         self._container = None
-        self._idle = threading.Event()
-        self._idle.set()
+        self._pending = 0
+        self._cond = threading.Condition()
         self.thread = threading.Thread(target=self._run, name="dcri-llm-blob", daemon=True)
         self.thread.start()
 
     def put(self, event):
+        with self._cond:
+            self._pending += 1
         try:
-            self._idle.clear()
             self.q.put_nowait(event)
-            _stats["blob_queued"] += 1
+            _bump("blob_queued")
         except queue.Full:
-            _stats["blob_dropped"] += 1
+            self._done(1)
+            _bump("blob_dropped")
+
+    def _done(self, n):
+        with self._cond:
+            self._pending -= n
+            if self._pending <= 0:
+                self._cond.notify_all()
 
     def _client(self):
         if self._container is None:
@@ -561,31 +578,32 @@ class _BlobSink:
                                for e in events).encode()
                 try:
                     self._append(name, data)
-                    _stats["blob_written"] += len(events)
+                    _bump("blob_written", len(events))
                     backoff = 1.0
                 except Exception:
-                    _stats["blob_errors"] += 1
-                    _stats["blob_dropped"] += len(events)
+                    _bump("blob_errors")
+                    _bump("blob_dropped", len(events))
                     log.debug("dcri_llm: blob append failed", exc_info=True)
                     self._container = None
                     time.sleep(backoff)
                     backoff = min(backoff * 2, 60.0)
-            if self.q.empty():
-                self._idle.set()
+            self._done(len(batch))
 
     def flush(self, timeout):
-        return self._idle.wait(timeout)
+        with self._cond:
+            return self._cond.wait_for(lambda: self._pending <= 0, timeout)
 
 
 _blob_lock = threading.Lock()
 _blob_sink = None
 _blob_url_seen = None
+_blob_unavailable = False
 
 
 def _get_blob_sink():
-    global _blob_sink, _blob_url_seen
+    global _blob_sink, _blob_url_seen, _blob_unavailable
     url = os.environ.get("TELEMETRY_BLOB_ACCOUNT_URL")
-    if not url:
+    if not url or _blob_unavailable:
         return None
     if _blob_sink is None or _blob_url_seen != url:
         with _blob_lock:
@@ -593,7 +611,8 @@ def _get_blob_sink():
                 try:
                     import azure.storage.blob  # noqa: F401  optional dependency
                 except ImportError:
-                    _blob_url_seen = url
+                    _blob_unavailable = True  # don't retry the import on every emit
+                    log.warning("dcri_llm: TELEMETRY_BLOB_ACCOUNT_URL set but azure-storage-blob missing")
                     return None
                 _blob_sink = _BlobSink(url, os.environ.get("TELEMETRY_BLOB_CONTAINER", "telemetry"))
                 _blob_url_seen = url
@@ -615,20 +634,20 @@ atexit.register(lambda: flush(2.0))
 def _emit(event):
     try:
         _stdout_sink(event)
-        _stats["emitted"] += 1
+        _bump("emitted")
     except Exception:
-        _stats["emit_errors"] += 1
+        _bump("emit_errors")
     try:
         sink = _get_blob_sink()
         if sink is not None:
             sink.put(event)
     except Exception:
-        _stats["emit_errors"] += 1
+        _bump("emit_errors")
     for fn in list(_extra_sinks):
         try:
             fn(dict(event))
         except Exception:
-            _stats["emit_errors"] += 1
+            _bump("emit_errors")
 
 # ---------------------------------------------------------------------------
 # Public manual emit
@@ -686,7 +705,7 @@ def record_llm_call(**fields) -> dict | None:
         _emit(ev)
         return ev
     except Exception:
-        _stats["emit_errors"] += 1
+        _bump("emit_errors")
         return None
 
 # ---------------------------------------------------------------------------

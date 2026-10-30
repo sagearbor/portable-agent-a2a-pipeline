@@ -16,6 +16,7 @@ from dotenv import load_dotenv
 from core.agents.llm_json import parse_llm_json
 from core.clients.client import (
     get_client, token_limit_kwarg, output_token_kwarg, completion_text,
+    LLMOutputError,
 )
 from core.dcri_llm import llm_action
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, ENRICH_MODEL
@@ -370,9 +371,14 @@ def enrich_draft_tickets(
                 **token_limit_kwarg(model, enrichment_max_tokens),
             )
 
-    # Truncated / filtered / empty output is an error the caller surfaces
-    # (previously it silently fell back to un-enriched drafts).
-    raw = completion_text(response, where="jira_context")
+    # Enrichment is best-effort: on truncated / filtered / empty output, warn
+    # (no content; the telemetry event records finish_reason / empty_output)
+    # and fall back to the unenriched drafts, same as a JSON parse failure.
+    try:
+        raw = completion_text(response, where="jira_context")
+    except LLMOutputError as exc:
+        print(f"[jira_context] WARNING: enrichment skipped, returning unenriched drafts: {exc}")
+        return draft_tickets
 
     # Tolerant parse (fences/prose/trailing commas/empty values). Enrichment is
     # best-effort: if it still can't be parsed, fall back to the input drafts.

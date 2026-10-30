@@ -1,15 +1,15 @@
 {
   "type": "Microsoft.App/containerApps",
   "name": "sagejirabot",
-  "location": "eastus2",
+  "location": "<LOCATION>",
   "identity": {
     "type": "UserAssigned",
     "userAssignedIdentities": {
-      "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-dcri-dev-ai-aca/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mgd-id-ai-aca-dcri-dev": {}
+      "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<UAMI_NAME>": {}
     }
   },
   "properties": {
-    "managedEnvironmentId": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-dcri-dev-ai-aca/providers/Microsoft.App/managedEnvironments/ace-ai-aca-dcri-dev",
+    "managedEnvironmentId": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.App/managedEnvironments/<ACA_ENVIRONMENT_NAME>",
     "workloadProfileName": "Consumption",
     "configuration": {
       "activeRevisionsMode": "Single",
@@ -21,8 +21,8 @@
       },
       "registries": [
         {
-          "server": "acrdcriaiacadev.azurecr.io",
-          "identity": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/rg-dcri-dev-ai-aca/providers/Microsoft.ManagedIdentity/userAssignedIdentities/mgd-id-ai-aca-dcri-dev"
+          "server": "<ACR_LOGIN_SERVER>",
+          "identity": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<UAMI_NAME>"
         }
       ]
     },
@@ -30,7 +30,7 @@
       "containers": [
         {
           "name": "sagejirabot",
-          "image": "acrdcriaiacadev.azurecr.io/sagejirabot:<GIT_SHORT_SHA>",
+          "image": "<ACR_LOGIN_SERVER>/sagejirabot:<GIT_SHORT_SHA>",
           "resources": {
             "cpu": 0.5,
             "memory": "1.0Gi"
@@ -50,7 +50,7 @@
             },
             {
               "name": "AZURE_OPENAI_ENDPOINT",
-              "value": "https://dcri-aifoundry-poc.openai.azure.com/"
+              "value": "<AZURE_OPENAI_ENDPOINT>"
             },
             {
               "name": "AZURE_OPENAI_API_VERSION",
@@ -82,7 +82,7 @@
             },
             {
               "name": "ATLASSIAN_OAUTH_REDIRECT_URI",
-              "value": "https://sagejirabot.<ACA_ENV_DOMAIN_PREFIX>.eastus2.azurecontainerapps.io/api/v1/auth/jira/callback"
+              "value": "https://sagejirabot.<ACA_ENV_DEFAULT_DOMAIN>/api/v1/auth/jira/callback"
             }
           ],
           "probes": [
