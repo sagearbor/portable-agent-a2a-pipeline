@@ -418,7 +418,7 @@ def create_ticket(
                 f"{sprint_resp.text}"
             )
 
-    print(f"[jira_tool] Created {issue_type} {ticket_id}: '{summary}'")
+    print(f"[jira_tool] Created {issue_type} {ticket_id}")
     return {
         "ticket_id": ticket_id,
         "url":       url,

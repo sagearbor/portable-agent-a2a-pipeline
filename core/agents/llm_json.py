@@ -49,13 +49,11 @@ def parse_llm_json(raw: str, *, context: str = "llm"):
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
-        lines = text.splitlines()
-        ln = max(0, exc.lineno - 1)
-        region = "\n".join(lines[max(0, ln - 1): ln + 2])
+        # Position only: never log the LLM output itself (may contain PHI).
         logger.warning(
-            "[%s] strict JSON parse failed (%s); attempting json_repair. "
-            "Region near line %d:\n%s",
-            context, exc, exc.lineno, region,
+            "[%s] strict JSON parse failed (%s); attempting json_repair "
+            "(response length %d chars).",
+            context, exc, len(text),
         )
 
         try:
@@ -63,15 +61,15 @@ def parse_llm_json(raw: str, *, context: str = "llm"):
         except ImportError as imp:  # pragma: no cover - depends on env
             raise ValueError(
                 f"[{context}] invalid LLM JSON ({exc}) and json_repair is not "
-                f"installed. Snippet: {text[max(0, exc.pos - 60): exc.pos + 60]!r}"
+                f"installed (response length {len(text)} chars)."
             ) from imp
 
         # return_objects=True hands back the parsed Python object directly.
         repaired = repair_json(text, return_objects=True)
         if repaired in (None, "", [], {}):
             raise ValueError(
-                f"[{context}] could not parse LLM JSON even after repair: {exc}. "
-                f"Snippet: {text[max(0, exc.pos - 60): exc.pos + 60]!r}"
+                f"[{context}] could not parse LLM JSON even after repair: {exc} "
+                f"(response length {len(text)} chars)."
             ) from exc
 
         logger.info("[%s] JSON recovered via json_repair", context)

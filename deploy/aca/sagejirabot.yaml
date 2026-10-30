@@ -1,0 +1,116 @@
+{
+  "type": "Microsoft.App/containerApps",
+  "name": "sagejirabot",
+  "location": "<LOCATION>",
+  "identity": {
+    "type": "UserAssigned",
+    "userAssignedIdentities": {
+      "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<UAMI_NAME>": {}
+    }
+  },
+  "properties": {
+    "managedEnvironmentId": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.App/managedEnvironments/<ACA_ENVIRONMENT_NAME>",
+    "workloadProfileName": "Consumption",
+    "configuration": {
+      "activeRevisionsMode": "Single",
+      "ingress": {
+        "external": true,
+        "targetPort": 3006,
+        "transport": "http",
+        "allowInsecure": false
+      },
+      "registries": [
+        {
+          "server": "<ACR_LOGIN_SERVER>",
+          "identity": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<UAMI_NAME>"
+        }
+      ]
+    },
+    "template": {
+      "containers": [
+        {
+          "name": "sagejirabot",
+          "image": "<ACR_LOGIN_SERVER>/sagejirabot:<GIT_SHORT_SHA>",
+          "resources": {
+            "cpu": 0.5,
+            "memory": "1.0Gi"
+          },
+          "env": [
+            {
+              "name": "LLM_AUTH",
+              "value": "identity"
+            },
+            {
+              "name": "SOLUTION_NAME",
+              "value": "sagejirabot"
+            },
+            {
+              "name": "TELEMETRY_BLOB_ACCOUNT_URL",
+              "value": "<STORAGE_BLOB_ENDPOINT from ~/dcri/azure-environment.md>"
+            },
+            {
+              "name": "AZURE_OPENAI_ENDPOINT",
+              "value": "<AZURE_OPENAI_ENDPOINT>"
+            },
+            {
+              "name": "AZURE_OPENAI_API_VERSION",
+              "value": "2025-03-01-preview"
+            },
+            {
+              "name": "AZURE_CLIENT_ID",
+              "value": "<UAMI_CLIENT_ID>"
+            },
+            {
+              "name": "AGENT1_MODEL",
+              "value": "gpt-5.4-mini"
+            },
+            {
+              "name": "AGENT2_MODEL",
+              "value": "gpt-5.4-mini"
+            },
+            {
+              "name": "AGENT3_MODEL",
+              "value": "gpt-5.4-mini"
+            },
+            {
+              "name": "ENRICH_MODEL",
+              "value": "gpt-5.4-mini"
+            },
+            {
+              "name": "SESSION_COOKIE_SECURE",
+              "value": "true"
+            },
+            {
+              "name": "ATLASSIAN_OAUTH_REDIRECT_URI",
+              "value": "https://sagejirabot.<ACA_ENV_DEFAULT_DOMAIN>/api/v1/auth/jira/callback"
+            }
+          ],
+          "probes": [
+            {
+              "type": "Liveness",
+              "httpGet": {
+                "path": "/health",
+                "port": 3006
+              },
+              "initialDelaySeconds": 15,
+              "periodSeconds": 10
+            },
+            {
+              "type": "Readiness",
+              "httpGet": {
+                "path": "/health",
+                "port": 3006
+              },
+              "initialDelaySeconds": 15,
+              "periodSeconds": 10
+            }
+          ]
+        }
+      ],
+      "scale": {
+        "minReplicas": 1,
+        "maxReplicas": 1
+      }
+    }
+  }
+}

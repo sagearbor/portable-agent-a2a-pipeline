@@ -15,7 +15,8 @@ Blob mode requires:
   BLOB_CONTAINER_NAME=sagejirabot          # optional, defaults to "sagejirabot"
   BLOB_SERIES_DEFAULTS_NAME=series-defaults.json  # optional
 
-Auth uses DefaultAzureCredential (managed identity in production, az login locally).
+Auth uses core.dcri_llm.get_credential() (the app's user-assigned managed
+identity on ACA via AZURE_CLIENT_ID, az login locally).
 No storage key or connection string needed.
 
 Usage (same regardless of backend):
@@ -160,11 +161,11 @@ class SeriesDefaultsStore:
 
     def _load_blob(self) -> dict:
         from azure.storage.blob import BlobServiceClient
-        from azure.identity import DefaultAzureCredential
+        from core.dcri_llm import get_credential
         try:
             client = BlobServiceClient(
                 account_url=_STORAGE_ACCOUNT_URL,
-                credential=DefaultAzureCredential(),
+                credential=get_credential(),
             )
             blob = client.get_blob_client(container=_CONTAINER_NAME, blob=_BLOB_NAME)
             data = blob.download_blob().readall()
@@ -175,10 +176,10 @@ class SeriesDefaultsStore:
 
     def _save_blob(self, store: dict) -> None:
         from azure.storage.blob import BlobServiceClient, ContentSettings
-        from azure.identity import DefaultAzureCredential
+        from core.dcri_llm import get_credential
         client = BlobServiceClient(
             account_url=_STORAGE_ACCOUNT_URL,
-            credential=DefaultAzureCredential(),
+            credential=get_credential(),
         )
         # Ensure container exists (no-op if already exists)
         container = client.get_container_client(_CONTAINER_NAME)

@@ -84,8 +84,9 @@ one of these (scheme, host, port, path). Trailing slashes matter. `http` vs
 | `SESSION_COOKIE_SECURE` | `false` (no HTTPS on localhost) | `true` | `true` |
 | `SESSION_SECRET` | any 48-byte urlsafe | any 48-byte urlsafe | **fresh value**, store in Key Vault |
 | `BOT_PORT` | `3011+` (any free VM port outside 3001–3010 POC range) | `3006` | `8080` (Container Apps default) |
-| `AZURE_AUTH_MODE` | `az_login` | `api_key` (bearer-token hack) | `managed_identity` |
-| `AZURE_OPENAI_KEY` | not needed | needed (hack) | not needed (managed identity) |
+| `LLM_AUTH` (was `AZURE_AUTH_MODE`, removed) | `identity` (az login) | `key` | `identity` |
+| `AZURE_OPENAI_API_KEY` (was `AZURE_OPENAI_KEY`) | not needed | needed | not needed (managed identity) |
+| `SOLUTION_NAME` | `sagejirabot` | `sagejirabot` | `sagejirabot` (telemetry) |
 | `AZURE_CLIENT_ID` | not set | not set | **UAMI client ID** (required for user-assigned identity — get from IT) |
 | `SESSION_COOKIE_DOMAIN` | not set | not set | may need to set when behind custom domain / multi-subdomain |
 
@@ -148,16 +149,15 @@ az containerapp create \
     ATLASSIAN_OAUTH_REDIRECT_URI=https://<app>.<region>.azurecontainerapps.io/api/v1/auth/jira/callback \
     SESSION_COOKIE_SECURE=true \
     JIRA_BASE_URL=https://dcri.atlassian.net \
-    AZURE_AUTH_MODE=managed_identity \
+    LLM_AUTH=identity \
+    SOLUTION_NAME=sagejirabot \
     AZURE_CLIENT_ID=<uami-client-id-from-IT> \
     BOT_PORT=8080
 ```
 
 > **The single most common managed-identity failure:** omitting `AZURE_CLIENT_ID`
-> with a user-assigned identity. `DefaultAzureCredential` then can't tell which
-> attached identity to use and either fails or grabs the wrong one. Our
-> `client.py` binds to `ManagedIdentityCredential(client_id=AZURE_CLIENT_ID)`
-> when the var is set — so set it. (Use `--user-assigned <uami-resource-id>` on
+> with a user-assigned identity. `core/dcri_llm.py` binds to
+> `ManagedIdentityCredential(client_id=AZURE_CLIENT_ID)` on ACA — so set it. (Use `--user-assigned <uami-resource-id>` on
 > the container app AND pass the UAMI's *client ID* as this env var; the
 > resource ID and client ID are different values.)
 
@@ -277,7 +277,7 @@ primary external interface. To also serve the **MCP** tools
 
 ### 11. Pre-flight checklist (quick scan before deploy)
 
-- [ ] `AZURE_AUTH_MODE=managed_identity` **and** `AZURE_CLIENT_ID=<uami client id>` set
+- [ ] `LLM_AUTH=identity`, `SOLUTION_NAME=sagejirabot` **and** `AZURE_CLIENT_ID=<uami client id>` set
 - [ ] UAMI has `Cognitive Services OpenAI User` on `ai-foundry-dcri-sage`
 - [ ] Secrets in Key Vault, referenced as ACA secrets (not plaintext): `ATLASSIAN_OAUTH_CLIENT_SECRET`, `SESSION_SECRET`, `JIRA_API_TOKEN`, (later) `GRAPH_CLIENT_SECRET`
 - [ ] `SESSION_SECRET` set to a fresh value (not the ephemeral per-process fallback)

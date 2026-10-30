@@ -14,6 +14,7 @@ Route is mounted at /api/v1 in bot/api/main.py, so the full path is:
 
 import os
 import time
+import contextvars
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -264,7 +265,12 @@ async def process_transcript(req: TranscriptRequest):
         "jira_creds": jira_creds,
     }
 
-    thread = threading.Thread(target=_run_pipeline_job, args=(job_id, req_data), daemon=True)
+    # copy_context() carries the dcri_llm user/action_id into the worker thread
+    # so the job's LLM telemetry events are attributed to this request.
+    ctx = contextvars.copy_context()
+    thread = threading.Thread(
+        target=ctx.run, args=(_run_pipeline_job, job_id, req_data), daemon=True,
+    )
     thread.start()
 
     import json as _json
@@ -460,8 +466,9 @@ async def enrich_drafts(req: EnrichDraftsRequest):
         fix_versions = await versions_future
 
         # Enrich with LLM (also in thread pool since it's synchronous)
+        # copy_context(): keep the dcri_llm user/action_id in the worker thread.
         enriched = await loop.run_in_executor(
-            None, enrich_draft_tickets,
+            None, contextvars.copy_context().run, enrich_draft_tickets,
             req.tickets, epics, stories, sprints, fix_versions,
         )
 

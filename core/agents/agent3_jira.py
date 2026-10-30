@@ -14,7 +14,10 @@ as an actual tool/function call rather than a direct Python import.
 import json
 import os
 from core.agents.llm_json import parse_llm_json
-from core.clients.client import get_client, token_limit_kwarg
+from core.clients.client import (
+    get_client, token_limit_kwarg, output_token_kwarg, completion_text,
+)
+from core.dcri_llm import llm_action
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, AGENT3_MODEL
 from core.tools.jira_tool import create_ticket, JiraCredentials
 
@@ -76,34 +79,28 @@ def run(
 
     input_text = f"Write Jira tickets for these approved items:\n{json.dumps(approved_items, indent=2)}"
 
-    if PROVIDER in ("openai_responses", "azure_responses"):
-        response = client.responses.create(
-            model=model,
-            instructions=AGENT_DEFINITION["instructions"],
-            input=input_text,
-            temperature=TEMPERATURE,
-        )
-        raw = response.output_text
-
-    else:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": AGENT_DEFINITION["instructions"]},
-                {"role": "user",   "content": input_text},
-            ],
-            temperature=TEMPERATURE,
-            **token_limit_kwarg(model, MAX_TOKENS),
-        )
-        raw = response.choices[0].message.content
-        finish = response.choices[0].finish_reason
-        if finish == "length":
-            print(f"[agent3] WARNING: response truncated (finish_reason=length). Try fewer items.")
-        if not raw:
-            raise RuntimeError(
-                f"LLM returned empty content (finish_reason={finish}). "
-                "Token limit may be too low or content filter triggered."
+    with llm_action("agent3_write_tickets"):
+        if PROVIDER in ("openai_responses", "azure_responses"):
+            response = client.responses.create(
+                model=model,
+                instructions=AGENT_DEFINITION["instructions"],
+                input=input_text,
+                temperature=TEMPERATURE,
+                **output_token_kwarg(model, MAX_TOKENS),
             )
+        else:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": AGENT_DEFINITION["instructions"]},
+                    {"role": "user",   "content": input_text},
+                ],
+                temperature=TEMPERATURE,
+                **token_limit_kwarg(model, MAX_TOKENS),
+            )
+
+    # Raises on finish_reason=length / content filter / empty output.
+    raw = completion_text(response, where="agent3")
 
     # Tolerant parse (fences/prose/trailing commas/empty values).
     tickets_to_create = parse_llm_json(raw, context="agent3")
@@ -152,7 +149,7 @@ def run(
             }
             result["email_id"] = ticket.get("email_id", "")
             results.append(result)
-            print(f"[agent3] [DRY RUN] Drafted ticket {i}: {ticket['summary'][:60]}")
+            print(f"[agent3] [DRY RUN] Drafted ticket {i}")
         else:
             # Convert the optional dict of env-var-keyed overrides into the
             # JiraCredentials dataclass that jira_tool expects.

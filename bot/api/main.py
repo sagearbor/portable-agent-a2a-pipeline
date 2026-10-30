@@ -35,7 +35,8 @@ load_dotenv()
 from core.config.settings import PROVIDER
 from bot.api.routes.transcript import router as transcript_router
 from bot.api.routes.jira_projects import router as jira_projects_router
-from bot.api.routes.auth import router as auth_router
+from bot.api.routes.auth import router as auth_router, SSO_USER_SESSION_KEY
+from core.dcri_llm import asgi_middleware, set_user
 from bot.api.routes.auth_jira import router as auth_jira_router
 from bot.api.routes.demo import router as demo_router
 from bot.api.routes.jira_search import router as jira_search_router
@@ -92,6 +93,28 @@ _session_secret = (os.environ.get("SESSION_SECRET") or "").strip()
 if not _session_secret or _session_secret == "CHANGE_ME":
     _session_secret = secrets.token_urlsafe(48)  # ephemeral — invalidates sessions on restart
     print("[SessionMiddleware] Using ephemeral session secret (set SESSION_SECRET in .env for persistence).")
+
+# ---------------------------------------------------------------------------
+# LLM telemetry context (core/dcri_llm.py). Starlette runs the LAST-added
+# middleware first, so the order on a request is:
+#   SessionMiddleware -> dcri_llm asgi_middleware -> _sso_user_middleware
+# asgi_middleware gives each request a fresh action_id (it reads the Easy Auth
+# header only if TRUST_EASY_AUTH_HEADER=1; sagejirabot has no Easy Auth, so it
+# stays unset). _sso_user_middleware runs after it and always wins with the
+# Duke SSO identity verified by /api/auth/verify (stored in the signed session).
+# ---------------------------------------------------------------------------
+def _sso_user_middleware(app):
+    async def middleware(scope, receive, send):
+        if scope.get("type") == "http":
+            sso_user = (scope.get("session") or {}).get(SSO_USER_SESSION_KEY)
+            if sso_user:
+                set_user(sso_user)
+        return await app(scope, receive, send)
+    return middleware
+
+
+app.add_middleware(_sso_user_middleware)
+app.add_middleware(asgi_middleware)
 
 app.add_middleware(
     SessionMiddleware,

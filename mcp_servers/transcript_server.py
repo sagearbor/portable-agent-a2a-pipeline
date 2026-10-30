@@ -158,32 +158,38 @@ def generate_mock_transcript(
     user_content = f"Generate a meeting transcript about: {idea.strip()}"
 
     # Call LLM via core client
-    from core.clients.client import get_client, token_limit_kwarg
+    from core.clients.client import (
+        get_client, token_limit_kwarg, output_token_kwarg, completion_text,
+    )
     from core.config.settings import PROVIDER, TEMPERATURE
+    from core.dcri_llm import llm_action
 
     client, model = get_client()
+    budget = detail_token_limits.get(detail_level, 4096)
 
-    if PROVIDER in ("openai_responses", "azure_responses"):
-        response = client.responses.create(
-            model=model,
-            instructions=system_prompt,
-            input=user_content,
-            temperature=TEMPERATURE,
-        )
-        raw = response.output_text
-    else:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_content},
-            ],
-            temperature=TEMPERATURE,
-            **token_limit_kwarg(model, detail_token_limits.get(detail_level, 4096)),
-        )
-        raw = response.choices[0].message.content
+    with llm_action("mcp_generate_transcript"):
+        if PROVIDER in ("openai_responses", "azure_responses"):
+            response = client.responses.create(
+                model=model,
+                instructions=system_prompt,
+                input=user_content,
+                temperature=TEMPERATURE,
+                **output_token_kwarg(model, budget),
+            )
+        else:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_content},
+                ],
+                temperature=TEMPERATURE,
+                **token_limit_kwarg(model, budget),
+            )
 
-    transcript = (raw or "").strip()
+    # Raises on finish_reason=length / content filter / empty output instead
+    # of returning an empty or truncated transcript as if it succeeded.
+    transcript = completion_text(response, where="transcript_server").strip()
 
     return {
         "transcript": transcript,

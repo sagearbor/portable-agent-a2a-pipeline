@@ -14,7 +14,11 @@ from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
 from core.agents.llm_json import parse_llm_json
-from core.clients.client import get_client, token_limit_kwarg
+from core.clients.client import (
+    get_client, token_limit_kwarg, output_token_kwarg, completion_text,
+    LLMOutputError,
+)
+from core.dcri_llm import llm_action
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, ENRICH_MODEL
 
 load_dotenv()
@@ -347,31 +351,33 @@ def enrich_draft_tickets(
 
     print(f"[jira_context] Enriching {len(draft_tickets)} tickets (max_tokens={enrichment_max_tokens})...")
 
-    if PROVIDER in ("openai_responses", "azure_responses"):
-        response = client.responses.create(
-            model=model,
-            instructions=system_prompt,
-            input=user_content,
-            temperature=TEMPERATURE,
-        )
-        raw = response.output_text
-    else:
-        response = client.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": user_content},
-            ],
-            temperature=TEMPERATURE,
-            **token_limit_kwarg(model, enrichment_max_tokens),
-        )
-        raw = response.choices[0].message.content
-        finish = response.choices[0].finish_reason
-        if finish == "length":
-            print(f"[jira_context] WARNING: enrichment response truncated (finish_reason=length)!")
+    with llm_action("enrich_drafts"):
+        if PROVIDER in ("openai_responses", "azure_responses"):
+            response = client.responses.create(
+                model=model,
+                instructions=system_prompt,
+                input=user_content,
+                temperature=TEMPERATURE,
+                **output_token_kwarg(model, enrichment_max_tokens),
+            )
+        else:
+            response = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user",   "content": user_content},
+                ],
+                temperature=TEMPERATURE,
+                **token_limit_kwarg(model, enrichment_max_tokens),
+            )
 
-    if not raw:
-        print("[jira_context] WARNING: LLM returned empty enrichment response")
+    # Enrichment is best-effort: on truncated / filtered / empty output, warn
+    # (no content; the telemetry event records finish_reason / empty_output)
+    # and fall back to the unenriched drafts, same as a JSON parse failure.
+    try:
+        raw = completion_text(response, where="jira_context")
+    except LLMOutputError as exc:
+        print(f"[jira_context] WARNING: enrichment skipped, returning unenriched drafts: {exc}")
         return draft_tickets
 
     # Tolerant parse (fences/prose/trailing commas/empty values). Enrichment is
@@ -380,7 +386,7 @@ def enrich_draft_tickets(
         enriched = parse_llm_json(raw, context="jira_context")
     except (ValueError, json.JSONDecodeError) as e:
         print(f"[jira_context] ERROR: Failed to parse enrichment JSON: {e}")
-        print(f"[jira_context] Raw response (last 200 chars): ...{raw.strip()[-200:]}")
+        print(f"[jira_context] Unparseable response length: {len(raw)} chars")
         return draft_tickets
 
     # Deterministic carry-forward: re-assert suggested_assignee and the
@@ -417,11 +423,6 @@ def enrich_draft_tickets(
     # pick up "Assign X" / "Action item: X" phrasings from the transcript.
     assignee_counts = sum(1 for t in enriched if t.get("suggested_assignee"))
     print(f"[jira_context] suggested_assignee populated on {assignee_counts}/{len(enriched)} tickets")
-    for i, t in enumerate(enriched):
-        sa = t.get("suggested_assignee")
-        if sa:
-            summary = (t.get("summary") or "")[:60]
-            print(f"[jira_context]   ticket[{i}] assignee={sa!r}  summary={summary!r}")
 
     return enriched
 

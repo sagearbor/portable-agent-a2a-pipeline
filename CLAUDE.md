@@ -22,18 +22,26 @@ az account set --subscription "2c69c8ba-1dc1-444a-9a18-a483b0be57db"
 # Run the pipeline
 python -m orchestration.pipeline
 python -m orchestration.pipeline --folder "Jira-Requests"
-```
 
-There are no tests, linter, or build step configured yet.
+# Tests (offline; fake LLM client)
+python -m pytest -q tests
+```
 
 ## Authentication
 
 We use **managed identity** (not API keys). See `docs/managed-identity-guide.md` for the full explanation.
 
-- **Locally:** `az login` stores a token in `~/.azure/` that persists across reboots
-- **In Azure:** system-assigned managed identity on the container (no secrets at all)
-- **Code:** `DefaultAzureCredential` in `clients/client.py` picks up whichever is available
-- **The `.env` file** only needs `AZURE_OPENAI_ENDPOINT` — no keys
+- **Code:** `get_client()` in `core/clients/client.py` builds every LLM client with the
+  vendored shared module `core/dcri_llm.py` (do not edit it; re-copy from
+  `mvp_landing_page/packages/dcri_llm/`). There is no auth-mode switch.
+- **Locally:** your `az login` session (AzureCliCredential)
+- **On ACA:** the shared user-assigned managed identity, selected by `AZURE_CLIENT_ID`
+- **`LLM_AUTH=key`** + `AZURE_OPENAI_API_KEY` is the only key path (no identity available)
+- **Telemetry:** each LLM call prints one `llm_call` JSON line (tokens, finish_reason,
+  user NetID). Wrap new call sites in `llm_action("<operation>")` and read the
+  text with `completion_text(response, where=...)`, which raises on
+  `finish_reason=length` / empty output.
+- **PHI:** never print or log prompt text, completion text or ticket content; lengths only.
 
 ## Network / VPN
 
@@ -77,9 +85,7 @@ Each agent follows the same pattern:
 
 ### Client Factory
 
-`clients/client.py` exports `get_client() -> (client, model)`. It reads PROVIDER and AZURE_AUTH_MODE from settings, builds the right client (AzureOpenAI or OpenAI), and returns it. Agent code never imports openai directly — always goes through `get_client()`.
-
-Azure auth uses managed identity (`DefaultAzureCredential` / `az login`). API key mode exists in code as a fallback but is not used. See `docs/managed-identity-guide.md`.
+`core/clients/client.py` exports `get_client() -> (client, model)`. It reads PROVIDER from settings and returns a dcri_llm-instrumented client (AzureOpenAI via `dcri_llm.make_client()` for the Azure providers). Agent code never imports openai directly — always goes through `get_client()`.
 
 ### Tools (Stubs)
 
@@ -163,9 +169,8 @@ bot/                     # FastAPI web app (imports core/ directly)
 ## Docker / Deployment
 
 - **Port:** 3006 (NGINX proxies from `https://aidemo.dcri.duke.edu/sageapp06/`)
-- **Start:** `./start-docker.sh` — fetches Azure bearer token + starts container
-- **Auto-start:** Cron `@reboot` runs `start-docker.sh`; token refreshed every 45 min via cron
-- **Azure auth in Docker:** Bearer token passed as `AZURE_OPENAI_KEY` (api_key mode) because Docker can't use `az login` directly. This is a dev VM workaround — Azure Container Apps will use managed identity.
+- **Start:** `./start-docker.sh` — builds if needed and starts the container
+- **Azure auth in Docker:** the container has no identity, so it needs `LLM_AUTH=key` + `AZURE_OPENAI_API_KEY` in `.env`. Never inject a personal `az login` token. The real deployment is ACA (`sagejirabot`) with managed identity; manifest template `deploy/aca/sagejirabot.yaml`.
 - **`restart: unless-stopped`** in docker-compose.yml — container survives Docker daemon restarts
 - **Frontend subpath:** All `fetch()` URLs use `BASE` variable (auto-detected from `window.location.pathname`) to support reverse proxy subpaths
 

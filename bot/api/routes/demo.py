@@ -10,6 +10,7 @@ between Responses API and Chat Completions based on PROVIDER.
 """
 
 import asyncio
+import contextvars
 import json
 import pathlib
 import random
@@ -21,7 +22,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, field_validator
 
 from core.config.settings import PROVIDER, TEMPERATURE
-from core.clients.client import get_client, token_limit_kwarg
+from core.clients.client import (
+    get_client, token_limit_kwarg, output_token_kwarg, completion_text, LLMOutputError,
+)
+from core.dcri_llm import llm_action
 
 # Transcript generation needs more tokens than the default MAX_TOKENS (2048)
 # A "low" detail transcript is ~500 words (~700 tokens), but "high" can be 2500+ words
@@ -127,7 +131,7 @@ async def generate_transcript(
     3. Calls the LLM (provider-branched) to generate a realistic transcript
     4. Returns the transcript text and speaker names used
     """
-    logger.info("[demo] Request received — idea: %r, detail_level: %s", req.idea[:100], req.detail_level)
+    logger.info("[demo] Request received — idea_chars=%d, detail_level: %s", len(req.idea or ""), req.detail_level)
 
     if not req.idea or not req.idea.strip():
         raise HTTPException(
@@ -166,9 +170,9 @@ async def generate_transcript(
 
     user_content = f"Generate a meeting transcript about: {req.idea.strip()}"
 
-    # Log the fully assembled prompts
-    logger.info("[demo] === SYSTEM PROMPT ===\n%s", system_prompt)
-    logger.info("[demo] === USER CONTENT ===\n%s", user_content)
+    # Lengths only: never log prompt or user text (may contain PHI).
+    logger.info("[demo] Prompt assembled: system_chars=%d, user_chars=%d",
+                len(system_prompt), len(user_content))
 
     # Step 4: Call LLM — run in thread pool to avoid blocking the event loop
     # (client.chat.completions.create is synchronous)
@@ -179,57 +183,63 @@ async def generate_transcript(
             model, req.detail_level, len(speaker_names),
         )
 
+        budget = _DETAIL_TOKEN_LIMITS.get(req.detail_level, 4096)
         if PROVIDER in ("openai_responses", "azure_responses"):
-            response = client.responses.create(
-                model=model,
-                instructions=system_prompt,
-                input=user_content,
-                temperature=TEMPERATURE,
-            )
-            return response.output_text
+            with llm_action("demo_generate_transcript"):
+                response = client.responses.create(
+                    model=model,
+                    instructions=system_prompt,
+                    input=user_content,
+                    temperature=TEMPERATURE,
+                    **output_token_kwarg(model, budget),
+                )
+            return completion_text(response, where="demo")
         else:
             # Retry up to 3 times — Azure content filter can intermittently
-            # return None content even for safe prompts
+            # return None content even for safe prompts. A truncated
+            # (finish_reason=length) response is not retried: same budget,
+            # same result, so it is raised immediately.
+            last_error = None
             for attempt in range(3):
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user",   "content": user_content},
-                    ],
-                    temperature=TEMPERATURE,
-                    **token_limit_kwarg(model, _DETAIL_TOKEN_LIMITS.get(req.detail_level, 4096)),
-                )
+                with llm_action("demo_generate_transcript"):
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user",   "content": user_content},
+                        ],
+                        temperature=TEMPERATURE,
+                        **token_limit_kwarg(model, budget),
+                    )
                 choice = response.choices[0]
                 content = choice.message.content
                 finish = choice.finish_reason
-                # Log full message structure for debugging
                 logger.info(
-                    "[demo] Attempt %d: content_type=%s, content_len=%d, finish=%s, "
-                    "role=%s, refusal=%s, tool_calls=%s",
-                    attempt + 1,
-                    type(content).__name__,
-                    len(content) if content else 0,
-                    finish,
-                    choice.message.role,
-                    getattr(choice.message, 'refusal', None),
-                    getattr(choice.message, 'tool_calls', None),
+                    "[demo] Attempt %d: content_len=%d, finish=%s",
+                    attempt + 1, len(content) if content else 0, finish,
                 )
-                if content and len(content) > 10:
-                    return content
+                if finish == "length":
+                    return completion_text(response, where="demo")  # raises
+                try:
+                    text = completion_text(response, where="demo")
+                    if len(text) > 10:
+                        return text
+                except LLMOutputError as exc:
+                    last_error = exc
                 logger.warning(
-                    "[demo] Attempt %d returned empty/None (finish_reason=%s), retrying...",
+                    "[demo] Attempt %d returned empty output (finish_reason=%s), retrying...",
                     attempt + 1, finish,
                 )
-            # All retries exhausted
-            return content or ""
+            # All retries exhausted: surface it instead of returning "".
+            raise last_error or LLMOutputError("[demo] LLM returned empty output after 3 attempts.")
 
     try:
         loop = asyncio.get_event_loop()
-        raw = await loop.run_in_executor(None, _call_llm)
+        # copy_context(): keep the dcri_llm user/action_id in the worker thread.
+        raw = await loop.run_in_executor(None, contextvars.copy_context().run, _call_llm)
         logger.info("[demo] LLM final result: %d chars", len(raw) if raw else 0)
         if not raw:
-            logger.error("[demo] LLM returned None/empty after retries! Idea: %r", req.idea[:100])
+            logger.error("[demo] LLM returned None/empty after retries!")
 
     except Exception as exc:
         logger.error("[demo] LLM call failed: %s", exc)

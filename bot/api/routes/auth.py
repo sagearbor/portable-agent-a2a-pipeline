@@ -24,12 +24,17 @@ import os
 import time
 import logging
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
+
+from core.dcri_llm import set_user
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Session key holding the server-verified Duke SSO identity (preferred_username).
+SSO_USER_SESSION_KEY = "sso_user"
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +200,7 @@ async def get_auth_config() -> AuthConfigResponse:
 
 
 @router.post("/verify", response_model=VerifyTokenResponse)
-async def verify_token(req: VerifyTokenRequest) -> VerifyTokenResponse:
+async def verify_token(req: VerifyTokenRequest, request: Request) -> VerifyTokenResponse:
     """
     Validate an Azure AD ID token received from MSAL.js in the browser.
 
@@ -234,5 +239,12 @@ async def verify_token(req: VerifyTokenRequest) -> VerifyTokenResponse:
     # Extract user identity from standard OIDC claims
     email = claims.get("preferred_username") or claims.get("email") or claims.get("upn", "")
     name  = claims.get("name") or claims.get("given_name", "")
+
+    # Remember the verified Duke identity in the signed session cookie so
+    # later requests attribute their LLM telemetry to this user (NetID only;
+    # see bot/api/main.py _sso_user_middleware). Telemetry, not authorization.
+    if email:
+        request.session[SSO_USER_SESSION_KEY] = email
+        set_user(email)
 
     return VerifyTokenResponse(valid=True, email=email, name=name)

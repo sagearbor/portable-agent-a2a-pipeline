@@ -117,7 +117,7 @@ Azure AI Foundry doesn't have this problem — tools are registered server-side.
 
 Tools should read credentials from environment variables:
 - `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` — for Jira tools
-- `AZURE_OPENAI_ENDPOINT`, `AZURE_AUTH_MODE` — for LLM tools
+- `AZURE_OPENAI_ENDPOINT`, `SOLUTION_NAME` (optional `LLM_AUTH`) — for LLM tools
 - MCP servers inherit env vars from the host process
 
 Never hardcode credentials. Never pass them as tool parameters.

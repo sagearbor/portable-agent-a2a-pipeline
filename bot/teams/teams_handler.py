@@ -29,6 +29,7 @@ Activation requires IT to provision:
 import os
 import re
 import asyncio
+import contextvars
 import logging
 from typing import Optional
 
@@ -793,6 +794,7 @@ class SageJiraBotHandler(ActivityHandler):
             loop = asyncio.get_event_loop()
             draft_tickets = await loop.run_in_executor(
                 None,
+                contextvars.copy_context().run,
                 lambda: self._run_pipeline_sync(
                     transcript_text=transcript_text,
                     meeting_title=meeting_title,
