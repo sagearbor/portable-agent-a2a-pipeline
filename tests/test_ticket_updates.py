@@ -396,6 +396,29 @@ def test_short_fragment_evidence_cannot_back_a_transition(jira):
     assert out["rejected"][0]["reason"] == "state change without a verbatim transcript quote"
 
 
+def test_weak_match_is_never_pre_ticked(monkeypatch, jira):
+    """Real-LLM check found news about VERDICT attached to an unrelated budget
+    ticket at 97% confidence; no shared words -> flagged, not pre-ticked."""
+    budget = _issue("ADP-12", "Quarterly budget report template", assignee="Vincent Lee")
+    budget["fields"]["description"] = None
+    jira.issues = [ADP17, budget]
+    t = TRANSCRIPT + " Im still working on improvements to VERDICT LLM-as-a-judge."
+    cands = tu.fetch_candidate_issues(["ADP"])
+    body = {"updates": [
+        {"issue_key": "ADP-12", "action": "comment", "payload": "Improving VERDICT LLM-as-a-judge.",
+         "evidence": "still working on improvements to VERDICT", "confidence": 0.97},
+        {"issue_key": "ADP-17", "action": "comment", "payload": "AI Foundry issues resolved.",
+         "evidence": "My Sages AI foundry issues are resolved", "confidence": 0.9},
+    ]}
+    body["drafts_covered_by_updates"] = [{"index": 0, "issue_key": "ADP-12"},
+                                         {"index": 1, "issue_key": "ADP-17"}]
+    out = tu.validate_proposals(body, cands, 2, t)
+    assert out["covered_drafts"] == {1: "ADP-17"}      # weak match never unticks a draft
+    by_key = {u["issue_key"]: u for u in out["updates"]}
+    assert by_key["ADP-12"]["weak_match"] is True and by_key["ADP-12"]["default_checked"] is False
+    assert by_key["ADP-17"]["weak_match"] is False and by_key["ADP-17"]["default_checked"] is True
+
+
 def test_validate_skips_transition_to_current_status(jira):
     cands = tu.fetch_candidate_issues(["ADP"])
     body = {"updates": [{"issue_key": "ADP-17", "action": "transition", "payload": "In Progress",

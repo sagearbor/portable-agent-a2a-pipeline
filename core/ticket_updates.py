@@ -307,6 +307,9 @@ SYSTEM_PROMPT = (
     "\n"
     "Rules:\n"
     "- issue_key MUST be one of the candidate keys. Never invent keys.\n"
+    "- Only match an issue whose summary/description is about the SAME piece of work. "
+    "A shared person's name or a vaguely similar area is NOT a match; when unsure, "
+    "propose nothing and let the new drafts cover it.\n"
     "- evidence: the transcript words that justify the update, copied verbatim (<= 200 chars).\n"
     "- confidence: 0.0-1.0 that the update is correct and wanted.\n"
     "- topic: a 2-5 word label for the piece of work. Use the SAME topic string for "
@@ -396,6 +399,27 @@ def _norm_ws(s: str) -> str:
 
 
 MIN_EVIDENCE_WORDS = 3
+
+_STOP = frozenset("""
+the and for with that this from have has had are was were been being into onto about
+still just need needs needed some more most very also than then them they their there
+here what when where which while will would could should issue issues ticket tickets
+work working done make made get got going project projects new update updates
+""".split())
+
+
+def _content_stems(text: str) -> set[str]:
+    """Distinctive word stems (first 5 letters of words >= 4 chars, minus stop words)."""
+    return {w[:5] for w in _norm_ws(text).split() if len(w) >= 4 and w not in _STOP}
+
+
+def shares_topic_words(cand: dict, evidence: str, payload: str) -> bool:
+    """True if the transcript evidence / proposed text shares at least one
+    distinctive word with the ticket (summary, parent summary, description).
+    A cheap guard against the LLM attaching news to the wrong ticket."""
+    ticket = " ".join(str(cand.get(k) or "") for k in
+                      ("summary", "parent_summary", "description_excerpt"))
+    return bool(_content_stems(ticket) & _content_stems(f"{evidence} {payload}"))
 
 
 def evidence_in_transcript(evidence: str, transcript_norm: str) -> bool:
@@ -529,8 +553,9 @@ def validate_proposals(
             continue
         seen.add(sig)
         upd["evidence_source"] = "transcript" if ev_ok else "inferred"
+        upd["weak_match"] = not shares_topic_words(cand, evidence, payload if action != "assign" else "")
         upd["default_checked"] = (action in DEFAULT_CHECKABLE and ev_ok
-                                  and conf >= LOW_CONFIDENCE)
+                                  and conf >= LOW_CONFIDENCE and not upd["weak_match"])
         upd["id"] = f"u{len(updates)}"
         updates.append(upd)
 
@@ -546,7 +571,9 @@ def validate_proposals(
         if 0 <= i < drafts_count and topic:
             draft_topics[i] = topic
 
-    updated_keys = {u["issue_key"] for u in updates}
+    # A draft is only "covered" (and unticked) by a confident-looking match;
+    # a weak match must never suppress a new ticket.
+    updated_keys = {u["issue_key"] for u in updates if not u.get("weak_match")}
     covered: dict[int, str] = {}
     for cv in raw.get("drafts_covered_by_updates") or []:
         if not isinstance(cv, dict):

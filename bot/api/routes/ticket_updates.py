@@ -66,7 +66,7 @@ _UPDATE_FIELDS = (
     "id", "issue_key", "issue_summary", "issue_type", "issue_status", "action",
     "payload", "topic", "evidence", "evidence_verified", "evidence_source",
     "confidence", "rationale", "default_checked", "before", "after",
-    "transition_id", "target_status", "account_id",
+    "transition_id", "target_status", "account_id", "weak_match",
 )
 
 
