@@ -14,6 +14,7 @@ from requests.auth import HTTPBasicAuth
 from dotenv import load_dotenv
 
 from core.agents.llm_json import parse_llm_json
+from core.jql import jql_quote
 from core.clients.client import (
     get_client, token_limit_kwarg, output_token_kwarg, completion_text,
     LLMOutputError,
@@ -51,7 +52,7 @@ def query_epics(project_key: str) -> list[dict]:
 
     # JQL: all epics in project that aren't Done
     jql = (
-        f'project = "{project_key}" '
+        f'project = {jql_quote(project_key)} '
         f'AND issuetype = Epic '
         f'AND statusCategory != Done '
         f'ORDER BY created DESC'
@@ -119,7 +120,7 @@ def query_recent_stories(project_key: str, limit: int = 20) -> list[dict]:
     base_url, auth, headers = _client()
 
     jql = (
-        f'project = "{project_key}" '
+        f'project = {jql_quote(project_key)} '
         f'AND issuetype in (Story, Task) '
         f'AND created >= -30d '
         f'ORDER BY created DESC'

@@ -25,6 +25,8 @@ appended by this code; the caller cannot influence them.
 import logging
 import requests
 
+from core.jql import jql_quote
+
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from bot.api.routes._jira_helpers import (
@@ -75,7 +77,7 @@ def _fetch_epics(
     Returns list of {"key", "summary", "status"} dicts.
     """
     jql = (
-        f'project = "{project_key}" '
+        f'project = {jql_quote(project_key)} '
         f'AND issuetype = Epic '
         f'AND statusCategory != Done '
         f'ORDER BY created DESC'

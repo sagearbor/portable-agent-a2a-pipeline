@@ -45,6 +45,7 @@ from bot.api.routes.jira_context_api import router as jira_context_api_router
 from bot.api.routes.extract import router as extract_router
 from bot.api.routes.user_prefs_api import router as user_prefs_router
 from bot.api.routes.jira_health import router as jira_health_router
+from bot.api.routes.ticket_updates import router as ticket_updates_router
 from core.jira_health import peek_jira_health
 
 
@@ -152,6 +153,7 @@ app.include_router(auth_jira_router,         prefix="/api/v1")
 app.include_router(extract_router,           prefix="/api/v1")
 app.include_router(user_prefs_router,        prefix="/api/v1")
 app.include_router(jira_health_router,       prefix="/api/v1")
+app.include_router(ticket_updates_router,    prefix="/api/v1")
 
 # Mount SSO auth routes at /api/auth
 app.include_router(auth_router, prefix="/api/auth")
