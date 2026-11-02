@@ -12,7 +12,7 @@ import pytest
 
 from core import dcri_llm, status_mapping as sm, ticket_updates as tu, update_llm, update_retrieval as ur, update_verifier as uv
 
-ALL_FLAGS = ("UPDATES_RETRIEVAL", "UPDATES_VERIFIER", "UPDATES_STRICT_STATUS")
+ALL_FLAGS = ("UPDATES_RETRIEVAL", "UPDATES_VERIFIER", "UPDATES_STRICT_STATUS", "UPDATES_DROP_WEAK")
 
 TRANSCRIPT = (
     "All for Sage. My Sages AI foundry issues are resolved. I have a new AI doc follow up "
@@ -461,3 +461,54 @@ def test_apply_legacy_category_fallback_when_flag_off(monkeypatch):
              "transition_id": "999", "target_status": "Done"}
     res, posts = _apply_with_adp_workflow(monkeypatch, stale)
     assert res[0]["message"] == "Moved to Cancelled"      # the old bug, only with the flag off
+
+
+# ---------------------------------------------------------------------------
+# D. Drop weak matches
+# ---------------------------------------------------------------------------
+
+def _weak_body():
+    return {"updates": [
+        # the real ADP-4 case: nothing in the quote/text is in "SOP Chatbot ..."
+        {"issue_key": "ADP-4", "action": "comment", "payload": "The IRB agent is done and in testing.",
+         "evidence": "my IRB agent is done and in testing", "confidence": 0.95},
+        {"issue_key": "ADP-17", "action": "comment", "payload": "AI Foundry issues resolved.",
+         "evidence": "My Sages AI foundry issues are resolved", "confidence": 0.9},
+    ]}
+
+
+def test_drop_weak_removes_updates_sharing_no_words(monkeypatch):
+    monkeypatch.setenv("UPDATES_DROP_WEAK", "1")
+    _install(monkeypatch, {"legacy": _weak_body()})
+    res = _suggest()
+    assert [u["issue_key"] for u in res["updates"]] == ["ADP-17"]
+    assert any(r["issue_key"] == "ADP-4" and r["reason"].startswith("weak match") for r in res["rejected"])
+
+
+def test_drop_weak_off_only_flags(monkeypatch):
+    _install(monkeypatch, {"legacy": _weak_body()})
+    res = _suggest()
+    adp4 = next(u for u in res["updates"] if u["issue_key"] == "ADP-4")
+    assert adp4["weak_match"] is True and adp4["default_checked"] is False
+
+
+@pytest.mark.parametrize("reason,keep", [
+    ("Both are about the SOP chatbot the speaker called the procedures assistant.", True),
+    ("Same piece of work.", False),                 # names no shared subject
+    ("Both concern the IRB agent.", False),         # names the statement's subject, not the ticket's
+    ("Both are about the chatbot.", False),         # in the ticket but not in what was said
+])
+def test_weak_match_kept_only_if_verifier_names_shared_subject(reason, keep):
+    cand = _cand("ADP-4", "SOP Chatbot", desc="Answers questions about standard operating procedures.")
+    u = {"issue_key": "ADP-4", "action": "comment", "weak_match": True, "verified": True,
+         "verifier_reason": reason, "evidence": "the procedures assistant is live now",
+         "payload": "The procedures assistant is live."}
+    kept, rej = tu.drop_weak_matches([u], [cand], None)
+    assert bool(kept) is keep and bool(rej) is not keep
+
+
+def test_weak_match_unverified_always_dropped():
+    cand = _cand("ADP-4", "SOP Chatbot")
+    u = {"issue_key": "ADP-4", "action": "comment", "weak_match": True,
+         "verifier_reason": "Both are about the SOP chatbot", "evidence": "x", "payload": "SOP chatbot"}
+    assert tu.drop_weak_matches([u], [cand], None)[0] == []
