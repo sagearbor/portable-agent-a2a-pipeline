@@ -8,6 +8,16 @@ never against live Jira; no Jira HTTP call is made.
     python -m tests.regression.update_regression --runs 3
     python -m tests.regression.update_regression --runs 3 --flags off   # old pipeline
     python -m tests.regression.update_regression --out /path/details.json
+    python -m tests.regression.update_regression --path single     # one-call API
+    python -m tests.regression.update_regression --split --runs 3   # split recall only
+
+``--path two_phase`` (default) runs what the web UI does: prepare (no
+drafts) then attach_drafts; ``single`` runs suggest_ticket_updates with the
+drafts in one go (the /suggest-updates endpoint).
+
+``--split`` runs only the work-item split on ``split_cases`` (with and without
+drafts) and checks every required topic is found — the regression for
+gpt-5.4-mini dropping finished work that no draft covers.
 
 Per run it reports: wrong-ticket updates (must be 0), wrong status changes
 (must be 0), wrongly covered drafts, missed expected updates, LLM calls,
@@ -63,6 +73,58 @@ def score(result: dict, expect: dict) -> dict:
             "found": len(expect.get("must") or []) - len(missed)}
 
 
+def split_topics_found(items: list[dict], expect_topics: list[dict]) -> dict:
+    """Which expected topics appear in the split's items (keyword match on
+    title + summary + quote).  Returns {found: [...], missing_required: [...],
+    missing_optional: [...]}."""
+    texts = [" ".join(str(it.get(k) or "") for k in ("title", "summary", "quote")).lower()
+             for it in items]
+    found, miss_req, miss_opt = [], [], []
+    for t in expect_topics:
+        hit = any(any(w.lower() in tx for w in t["any"]) for tx in texts)
+        if hit:
+            found.append(t["label"])
+        elif t.get("required"):
+            miss_req.append(t["label"])
+        else:
+            miss_opt.append(t["label"])
+    return {"found": found, "missing_required": miss_req, "missing_optional": miss_opt}
+
+
+def run_split(runs: int) -> int:
+    from core import dcri_llm, update_retrieval as ur
+
+    data = load_fixtures()
+    print(f"split model: {ur.split_model()}")
+    hdr = ("run", "case", "drafts", "items", "found", "missing_required", "missing_optional",
+           "empty", "length", "error", "latency_s")
+    print("| " + " | ".join(hdr) + " |")
+    print("|" + "---|" * len(hdr))
+    bad = 0
+    for run in range(1, runs + 1):
+        for case in data.get("split_cases") or []:
+            for drafts in (case["drafts"], []):
+                events: list[dict] = []
+                sink = dcri_llm.add_sink(lambda e: events.append(e) if e.get("event") == "llm_call" else None)
+                t0, err, items = time.perf_counter(), None, []
+                try:
+                    items, _ = ur.split_work_items(case["transcript"], drafts, 200_000)
+                except Exception as exc:   # noqa: BLE001
+                    err = type(exc).__name__
+                finally:
+                    dcri_llm._extra_sinks.remove(sink)
+                sc = split_topics_found(items, case["expect_topics"])
+                empty = sum(1 for e in events if e.get("empty_output"))
+                length = sum(1 for e in events if e.get("finish_reason") == "length")
+                bad += len(sc["missing_required"]) + empty + length + (1 if err else 0)
+                print("| " + " | ".join(str(x) for x in (
+                    run, case["name"], len(drafts), len(items),
+                    f"{len(sc['found'])}/{len(case['expect_topics'])}",
+                    ", ".join(sc["missing_required"]) or "-", ", ".join(sc["missing_optional"]) or "-",
+                    empty, length, err or "-", round(time.perf_counter() - t0, 1))) + " |", flush=True)
+    return 1 if bad else 0
+
+
 def _set_flags(mode: str) -> None:
     for f in FLAGS:
         os.environ[f] = "0" if mode == "off" else "1"
@@ -70,7 +132,7 @@ def _set_flags(mode: str) -> None:
         os.environ.setdefault("UPDATES_MATCH_MODEL", os.environ.get("ENRICH_MODEL") or "gpt-5.4-mini")
 
 
-def run_once(fx: dict, users: dict) -> tuple[dict, dict]:
+def run_once(fx: dict, users: dict, path: str = "two_phase") -> tuple[dict, dict]:
     from core import dcri_llm, ticket_updates as tu
 
     events: list[dict] = []
@@ -90,9 +152,15 @@ def run_once(fx: dict, users: dict) -> tuple[dict, dict]:
     err = None
     result: dict = {}
     try:
-        result = tu.suggest_ticket_updates(
-            fx["transcript"], ["ADP"], fx["drafts"], None, candidates=fx["candidates"],
-            transitions_fn=transitions_fn, user_fn=user_fn)
+        if path == "single":
+            result = tu.suggest_ticket_updates(
+                fx["transcript"], ["ADP"], fx["drafts"], None, candidates=fx["candidates"],
+                transitions_fn=transitions_fn, user_fn=user_fn)
+        else:   # what the web UI does: prepare (no drafts), then attach the drafts
+            result = tu.suggest_ticket_updates(
+                fx["transcript"], ["ADP"], [], None, candidates=fx["candidates"],
+                transitions_fn=transitions_fn, user_fn=user_fn)
+            result.update(tu.attach_drafts(result.get("items") or [], result["updates"], fx["drafts"]))
     except Exception as exc:   # noqa: BLE001 - counted as an error
         err = f"{type(exc).__name__}: {str(exc)[:200]}"
     finally:
@@ -139,7 +207,13 @@ def main(argv=None) -> int:
     ap.add_argument("--flags", choices=("on", "off"), default="on")
     ap.add_argument("--only", help="run only this fixture name")
     ap.add_argument("--out", help="write per-run details (proposed updates) as JSON here")
+    ap.add_argument("--path", choices=("two_phase", "single"), default="two_phase")
+    ap.add_argument("--split", action="store_true", help="only check the work-item split on split_cases")
     args = ap.parse_args(argv)
+
+    if args.split:
+        _set_flags(args.flags)
+        return run_split(args.runs)
 
     _set_flags(args.flags)
     data = load_fixtures()
@@ -148,7 +222,7 @@ def main(argv=None) -> int:
         for fx in data["fixtures"]:
             if args.only and fx["name"] != args.only:
                 continue
-            row, detail = run_once(fx, data["users"])
+            row, detail = run_once(fx, data["users"], args.path)
             row.update(run=run, fixture=fx["name"])
             rows.append(row)
             details.append({"run": run, "fixture": fx["name"], **detail, "score": row})

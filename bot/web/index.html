@@ -900,6 +900,22 @@
       font-size: 12px; color: #2d3142;
     }
     .update-card.low-conf { background: #fbfbfc; border-style: dashed; }
+    .progress-panel {
+      display: none; margin-top: 10px; padding: 10px 12px; font-size: 13px; color: #2d3142;
+      background: #f7f9fe; border: 1px solid #d0daf0; border-radius: var(--radius);
+    }
+    .progress-panel.show { display: block; }
+    .progress-panel ul, .updates-pending ul { margin: 6px 0 0 18px; padding: 0; }
+    .progress-panel li, .updates-pending li { margin: 2px 0; }
+    .updates-pending {
+      padding: 10px 12px; margin-bottom: 8px; font-size: 13px; color: #2d3142;
+      background: #f7f9fe; border: 1px dashed #d0daf0; border-radius: var(--radius);
+    }
+    .mini-spin {
+      display: inline-block; width: 11px; height: 11px; margin-right: 6px; vertical-align: -1px;
+      border: 2px solid #c5d3ee; border-top-color: var(--accent); border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
     .update-card input[type="checkbox"] { margin-top: 3px; }
     .update-card .upd-body { flex: 1; min-width: 0; }
     .update-card .upd-head { font-size: 13px; margin-bottom: 4px; }
@@ -1164,6 +1180,7 @@
 
     <div class="alert alert-error"   id="analyze-error"></div>
     <div class="alert alert-info"    id="analyze-info"></div>
+    <div class="progress-panel" id="analyze-progress" aria-live="polite"></div>
   </div>
 
   <!-- -----------------------------------------------------------------------
@@ -1290,6 +1307,7 @@
     <div class="updates-section" id="updates-section" style="display:none;">
       <div class="section-heading" id="updates-heading">Updates to existing tickets</div>
       <p class="subtitle" id="updates-subtitle">The transcript mentions work that already has an open ticket. Tick the changes you want; low-confidence ones start unticked.</p>
+      <div id="updates-pending" class="updates-pending" style="display:none;" aria-live="polite"></div>
       <div id="updates-list"></div>
       <div class="submit-bar">
         <label class="dry-run-label" title="Show what would happen without writing anything to Jira">
@@ -1417,6 +1435,9 @@ const state = {
   _batchId: null,     // set at submit time for label display
   updates: [],        // proposed updates to existing tickets (suggest-updates)
   topicGroups: [],    // [{topic, draft_indices, update_ids}] for "Group by: Topic"
+  updatesPending: false,  // true while the update check is still running after drafts render
+  pendingTopics: [],      // work-item titles found so far (shown in the placeholder)
+  analyzeRun: 0,          // bumps per Analyze click; stale background results are dropped
 };
 
 /* =========================================================================
@@ -1906,6 +1927,22 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
   const timeMsg = estMin <= 1 ? 'about 1 minute' : `about ${estMin} minutes`;
   showAlert(infoEl, `Running pipeline in dry-run mode. Estimated time: ${timeMsg} (3 LLM calls on ${Math.round(transcript.length/1000)}k chars)...`);
 
+  // Start the existing-ticket update check NOW (Jira fetch + topic split +
+  // matching need only the transcript), in parallel with Agents 1-3.  Drafts
+  // are attached once they exist (attachDrafts).  Read-only.
+  const runId = ++state.analyzeRun;
+  state.updatesPending = false; state.pendingTopics = [];
+  state.updatesNeedSignIn = false;
+  const prepPromise = prepareUpdates(transcript).then(d => {
+    if (d && runId === state.analyzeRun) {
+      state.pendingTopics = (d.items || []).map(it => it.title).filter(Boolean);
+      if (state.updatesPending) renderUpdatesPending();
+    }
+    return d;
+  });
+  const progEl = document.getElementById('analyze-progress');
+  progEl.classList.remove('show'); progEl.innerHTML = '';
+
   try {
     const payload = {
       transcript,
@@ -1914,6 +1951,7 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       dry_run:          true,
       jira_base_url:    state.baseUrl,
       jira_project_key: state.projectKey,
+      progress:         true,   // stream one JSON line per stage (see readPipelineStream)
       // jira_email and jira_api_token are intentionally omitted — the
       // server uses its service-account credentials from env vars.
     };
@@ -1940,7 +1978,8 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       throw new Error(msg);
     }
 
-    const rawResp = await resp.text();
+    const rawResp = await readPipelineStream(resp, p => showPipelineProgress(progEl, p));
+    progEl.classList.remove('show');
     dbg(5, '[Pipeline] Response length:', rawResp.length);
 
     let data;
@@ -1958,7 +1997,7 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
         state.draftTickets = [];
         state.rejectedItems = data.rejected || [];
         showAlert(infoEl, 'No new tickets — checking for updates to existing tickets...');
-        const upd = await suggestUpdates(transcript);
+        const upd = await prepPromise;   // no drafts -> nothing to attach
         hideAlert(infoEl);
         if (upd && upd.updates && upd.updates.length) {
           applySuggestions(upd);
@@ -2000,21 +2039,31 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
     state.updates = [];
     state.topicGroups = [];
 
-    // Look for updates to EXISTING tickets in parallel with the duplicate
-    // check and enrichment (read-only; nothing is written until Apply).
-    const updatesPromise = suggestUpdates(transcript);
+    // Duplicate check and enrichment run in parallel (both read-only).
+    const dupPromise = fetch(`${BASE}/api/v1/jira/check-duplicates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        summaries: state.draftTickets.map(t => t.summary),
+        project_key: state.projectKey,
+        base_url: state.baseUrl,
+      }),
+    });
+    dupPromise.catch(() => {});   // handled below; avoid an unhandled rejection
+    const enrichPromise = fetch(`${BASE}/api/v1/enrich-drafts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tickets: state.draftTickets,
+        project_key: state.projectKey,
+        base_url: state.baseUrl,
+      }),
+    });
+    enrichPromise.catch(() => {});
 
     // Check for duplicate tickets in Jira
     try {
-      const dupResp = await fetch(`${BASE}/api/v1/jira/check-duplicates`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          summaries: state.draftTickets.map(t => t.summary),
-          project_key: state.projectKey,
-          base_url: state.baseUrl,
-        }),
-      });
+      const dupResp = await dupPromise;
       if (dupResp.ok) {
         const dupData = await dupResp.json();
         dupData.results.forEach((result, idx) => {
@@ -2031,15 +2080,7 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
     // Enrich drafts with epic/effort/scheduling from LLM
     try {
       showAlert(infoEl, 'Enriching tickets with project context...');
-      const enrichResp = await fetch(`${BASE}/api/v1/enrich-drafts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tickets: state.draftTickets,
-          project_key: state.projectKey,
-          base_url: state.baseUrl,
-        }),
-      });
+      const enrichResp = await enrichPromise;
       if (enrichResp.ok) {
         const enrichData = await enrichResp.json();
         dbg(5, '[Enrich] Received', enrichData.tickets.length, 'enriched tickets');
@@ -2067,11 +2108,10 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       hideAlert(infoEl);
     }
 
-    // Merge proposed updates (also unticks drafts an update already covers).
-    showAlert(infoEl, 'Checking existing tickets for updates...');
-    const updData = await updatesPromise;
-    hideAlert(infoEl);
-    applySuggestions(updData);   // may show a "sign in for update suggestions" hint
+    // Show the drafts NOW; the update check finishes in the background and
+    // then merges in (also unticking drafts an update already covers).
+    state.updatesPending = true;
+    finishUpdates(prepPromise, runId);
 
     // Auto-calculate dates from anchor if enrichment didn't provide them
     const hasAnyDates = state.draftTickets.some(t => t.start_date || t.due_date);
@@ -2090,6 +2130,7 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
 
   } catch (err) {
     hideAlert(infoEl);
+    progEl.classList.remove('show');
     showAlert(errEl, err.message);
   } finally {
     setLoading(btn, false);
@@ -2387,7 +2428,10 @@ function renderTickets() {
 
 /* =========================================================================
    Updates to existing tickets + "Group by" toggle
-   - suggestUpdates(): POST /api/v1/suggest-updates (read-only)
+   - prepareUpdates(): POST /api/v1/suggest-updates/prepare at Analyze time
+     (read-only; runs in parallel with Agents 1-3, no drafts yet)
+   - attachDrafts(): POST /api/v1/suggest-updates/attach-drafts once drafts exist
+   - finishUpdates(): merges both into the page after the drafts are shown
    - renderUpdates(): the "Updates to existing tickets" section
    - renderTopicRows(): Topic mode — drafts + updates under topic headings
    - Apply button: POST /api/v1/apply-updates with ONLY the ticked updates
@@ -2528,9 +2572,32 @@ function updateUpdatesCount() {
   document.getElementById('btn-apply-updates').disabled = n === 0;
 }
 
+function renderUpdatesPending() {
+  const el = document.getElementById('updates-pending');
+  if (!state.updatesPending) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  const key = state.projectKey ? escHtml(state.projectKey) + ' ' : '';
+  const topics = state.pendingTopics || [];
+  el.innerHTML = `<span class="mini-spin" aria-hidden="true"></span>Checking your existing ${key}tickets for updates…`
+    + (topics.length
+      ? `<div class="text-muted" style="margin-top:6px;">Topics found in the transcript (${topics.length}):</div><ul>`
+        + topics.map(t => `<li>${escHtml(t)}</li>`).join('') + '</ul>'
+      : '');
+  el.style.display = 'block';
+}
+
 function renderUpdates() {
   const section = document.getElementById('updates-section');
   const list = document.getElementById('updates-list');
+  renderUpdatesPending();
+  if (state.updatesPending && !state.updates.length) {
+    section.style.display = 'block';
+    document.getElementById('updates-heading').style.display = 'block';
+    document.getElementById('updates-subtitle').textContent =
+      'Your new-ticket drafts are ready above. Suggested changes to existing tickets will appear here in a few seconds.';
+    list.innerHTML = '';
+    updateUpdatesCount();
+    return;
+  }
   if (!state.updates.length) { section.style.display = 'none'; list.innerHTML = ''; return; }
   section.style.display = 'block';
   const topic = getGroupMode() === 'topic';
@@ -2543,33 +2610,114 @@ function renderUpdates() {
   updateUpdatesCount();
 }
 
-async function suggestUpdates(transcript) {
+/* Read the process-transcript stream.  With progress=true the server sends
+   one {"progress": true, ...} JSON line per stage change (plus whitespace
+   keep-alives); the LAST non-empty line is the result.  Returns that line. */
+async function readPipelineStream(resp, onProgress) {
+  if (!resp.body || !resp.body.getReader) return resp.text();
+  const reader = resp.body.getReader();
+  const dec = new TextDecoder();
+  let buf = '', last = '';
+  const handle = (line) => {
+    line = line.trim();
+    if (!line) return;
+    last = line;
+    if (line.startsWith('{"progress"')) {
+      try { onProgress(JSON.parse(line)); } catch (_) { /* partial/odd line — ignore */ }
+    }
+  };
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl;
+    while ((nl = buf.indexOf('\n')) >= 0) { handle(buf.slice(0, nl)); buf = buf.slice(nl + 1); }
+  }
+  buf += dec.decode();
+  handle(buf);
+  return last;
+}
+
+function showPipelineProgress(el, p) {
+  dbg(5, '[Pipeline] progress:', p.stage, (p.action_items || []).length, 'items');
+  const items = p.action_items || [];
+  const step = { chunking: 'Reading the transcript…', agent1: 'Step 1 of 3: finding action items…',
+                 agent2: 'Step 2 of 3: deciding which items need a ticket…',
+                 agent3: 'Step 3 of 3: writing the ticket drafts…' }[p.stage] || 'Working…';
+  let html = `<span class="mini-spin" aria-hidden="true"></span>${escHtml(step)}`;
+  if (items.length) {
+    html += `<div style="margin-top:6px;"><strong>Found ${items.length} action item${items.length !== 1 ? 's' : ''}</strong>`
+      + (typeof p.approved_count === 'number' ? ` — ${p.approved_count} need${p.approved_count === 1 ? 's' : ''} a new ticket` : '')
+      + ':</div><ul>' + items.map(t => `<li>${escHtml(t)}</li>`).join('') + '</ul>';
+  }
+  el.innerHTML = html;
+  el.classList.add('show');
+}
+
+/* Phase 1 (at Analyze time, no drafts yet): POST /suggest-updates/prepare.
+   Returns the suggest-updates response plus `items`, or null on failure. */
+async function prepareUpdates(transcript) {
   try {
-    dbg(5, '[Updates] POST', `${BASE}/api/v1/suggest-updates`);
-    const resp = await fetch(`${BASE}/api/v1/suggest-updates`, {
+    dbg(5, '[Updates] POST', `${BASE}/api/v1/suggest-updates/prepare`);
+    const resp = await fetch(`${BASE}/api/v1/suggest-updates/prepare`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        transcript,
-        project_key: state.projectKey,
-        base_url: state.baseUrl,
-        drafts: state.draftTickets.map(t => ({ summary: t.summary || '', description: t.description || '' })),
-      }),
+      body: JSON.stringify({ transcript, project_key: state.projectKey, base_url: state.baseUrl }),
     });
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
-      dbg(1, '[Updates] suggest failed (non-fatal):', resp.status, extractErrorMsg(err.detail, ''));
+      dbg(1, '[Updates] prepare failed (non-fatal):', resp.status, extractErrorMsg(err.detail, ''));
       if (resp.status === 401) state.updatesNeedSignIn = true;
       return null;
     }
     const data = await resp.json();
-    dbg(5, '[Updates] proposals:', (data.updates || []).length, 'rejected:', data.rejected_count || 0,
+    dbg(5, '[Updates] prepared proposals:', (data.updates || []).length, 'items:', (data.items || []).length,
         'candidates:', data.candidates_considered);
     return data;
   } catch (e) {
-    dbg(1, '[Updates] suggest failed (non-fatal):', e);
+    dbg(1, '[Updates] prepare failed (non-fatal):', e);
     return null;
   }
+}
+
+/* Phase 2: map the drafts onto the prepared work items (topics + which
+   drafts an update already covers).  On failure the updates still show,
+   just without draft topics/covering. */
+async function attachDrafts(prep) {
+  const drafts = state.draftTickets.map(t => ({ summary: t.summary || '', description: t.description || '' }));
+  if (!prep || !(prep.items || []).length || !drafts.length) return prep;
+  try {
+    const resp = await fetch(`${BASE}/api/v1/suggest-updates/attach-drafts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_key: state.projectKey,
+        items: prep.items,
+        updates: (prep.updates || []).map(u => ({ id: u.id, issue_key: u.issue_key, item_id: u.item_id || null,
+                                                  topic: u.topic || null, weak_match: !!u.weak_match })),
+        drafts,
+      }),
+    });
+    if (!resp.ok) { dbg(1, '[Updates] attach-drafts failed (non-fatal):', resp.status); return prep; }
+    const att = await resp.json();
+    return { ...prep, draft_topics: att.draft_topics, covered_drafts: att.covered_drafts,
+             topic_groups: att.topic_groups };
+  } catch (e) {
+    dbg(1, '[Updates] attach-drafts failed (non-fatal):', e);
+    return prep;
+  }
+}
+
+/* Drafts are already on screen; finish the update check and merge it in. */
+async function finishUpdates(prepPromise, runId) {
+  renderUpdates();                    // placeholder in the Updates section
+  const prep = await prepPromise;
+  if (runId !== state.analyzeRun) return;
+  const data = await attachDrafts(prep);
+  if (runId !== state.analyzeRun) return;
+  state.updatesPending = false;
+  applySuggestions(data);   // may show a "sign in for update suggestions" hint
+  renderTickets();
 }
 
 function applySuggestions(data) {
