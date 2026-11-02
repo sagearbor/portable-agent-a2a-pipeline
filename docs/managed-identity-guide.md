@@ -168,6 +168,50 @@ Calls Azure AI Foundry    ◄── same call ──►  Calls Azure AI Foundry
 
 ---
 
+### Jira credential and the "Jira connection is down" banner
+
+The shared Jira credential is **not** covered by managed identity: it is an
+Atlassian API token (basic auth) read from three env vars, plus one optional
+non-secret date:
+
+| Var | ACA source | Notes |
+|---|---|---|
+| `JIRA_BASE_URL` | plain env | e.g. `https://your-site.atlassian.net` |
+| `JIRA_EMAIL` | plain env | the Atlassian account that owns the token |
+| `JIRA_API_TOKEN` | `secretRef: jira-api-token` | never in git, never in a manifest value |
+| `JIRA_TOKEN_EXPIRES_ON` | plain env, optional | `YYYY-MM-DD` you picked when creating the token |
+
+Every page of the web UI polls `GET /api/v1/jira/health` (on load + every
+10 min; server caches ~5 min) and shows a fixed bar across the top:
+
+| status | when | bar |
+|---|---|---|
+| `ok` | Jira accepts the token (`/rest/api/3/myself` = 200) | none |
+| `missing` | any of the three vars unset / `CHANGE_ME` | red |
+| `invalid` | Jira answers 401/403, or `JIRA_TOKEN_EXPIRES_ON` is in the past | red |
+| `expiring_soon` | token works, expiry date is 14 days away or less | amber |
+| `unreachable` | network error, timeout, 5xx | grey ("not responding", not "expired") |
+
+Atlassian does not expose a token's expiry date through the API, so
+`JIRA_TOKEN_EXPIRES_ON` is the only way to get the two-week warning. When
+you rotate the token: set the new secret, update the date, and the bar clears
+within ~5 minutes (or on the next restart).
+
+```bash
+# Rotate (values are yours to fill in; run with the app's real RG)
+az containerapp secret set -n sagejirabot -g "$RG" \
+  --secrets jira-api-token="<NEW_TOKEN>"
+az containerapp update -n sagejirabot -g "$RG" \
+  --set-env-vars JIRA_TOKEN_EXPIRES_ON=<YYYY-MM-DD>
+
+# Check
+curl -s https://<APP_FQDN>/api/v1/jira/health
+```
+
+`/health` (the container probe) also reports the last cached Jira status as
+`"jira"`, but it always returns HTTP 200 and never calls Jira itself, so a
+Jira outage can never make ACA restart the container.
+
 ## WSL vs Windows Native
 
 `az login` tokens are stored per environment:

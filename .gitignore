@@ -4,3 +4,5 @@ __pycache__/
 .venv/
 tmp/
 data/
+# Real infra IDs / deploy manifests (repo is public)
+*.local.yaml

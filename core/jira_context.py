@@ -19,6 +19,7 @@ from core.clients.client import (
     LLMOutputError,
 )
 from core.dcri_llm import llm_action
+from core.tools.jira_tool import _raise_if_unauthorized
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, ENRICH_MODEL
 
 load_dotenv()
@@ -69,6 +70,7 @@ def query_epics(project_key: str) -> list[dict]:
         timeout=15,
     )
 
+    _raise_if_unauthorized(resp, None)
     if not resp.ok:
         raise RuntimeError(
             f"Jira epic query failed {resp.status_code}: {resp.text[:200]}"
@@ -136,6 +138,7 @@ def query_recent_stories(project_key: str, limit: int = 20) -> list[dict]:
         timeout=15,
     )
 
+    _raise_if_unauthorized(resp, None)
     if not resp.ok:
         raise RuntimeError(
             f"Jira story query failed {resp.status_code}: {resp.text[:200]}"
