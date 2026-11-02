@@ -171,15 +171,6 @@ def peek_jira_health() -> dict | None:
         return dict(_cache) if _cache is not None else None
 
 
-def mark_shared_credential_rejected() -> None:
-    """Called when a real Jira call with the shared credential got a 401, so
-    the banner turns red on the next poll instead of after the cache expires."""
-    global _cache, _cache_at
-    with _lock:
-        _cache = _result(STATUS_INVALID, JIRA_DOWN_MESSAGE)
-        _cache_at = time.monotonic()
-
-
 def clear_cache() -> None:
     global _cache, _cache_at
     with _lock:

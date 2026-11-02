@@ -139,7 +139,14 @@ def _client(
 
     if credentials is not None:
         base_url = credentials.base_url.rstrip("/")
-        auth = HTTPBasicAuth(credentials.email, credentials.api_token)
+        email = credentials.email
+        env_token = (os.environ.get("JIRA_API_TOKEN") or "").strip()
+        if env_token and credentials.api_token == env_token:
+            # The shared env token only ever goes to the env site, as the env
+            # account — never to a caller-supplied base_url.
+            base_url = os.environ["JIRA_BASE_URL"].rstrip("/")
+            email = os.environ.get("JIRA_EMAIL", "")
+        auth = HTTPBasicAuth(email, credentials.api_token)
     else:
         base_url = os.environ["JIRA_BASE_URL"].rstrip("/")
         email    = os.environ["JIRA_EMAIL"]
@@ -154,29 +161,52 @@ def _client(
 OAUTH_EXPIRED_MESSAGE = (
     "Your Jira sign-in has expired \u2014 please sign in to Jira again and retry."
 )
+REQUEST_UNAUTHORIZED_MESSAGE = (
+    "Jira rejected the credentials used for this request (HTTP 401)."
+)
+
+
+def _uses_shared_credential(credentials: "JiraCredentials | None") -> bool:
+    """True only when the call used exactly the env JIRA_* credential."""
+    if credentials is None:
+        return True
+    if credentials.access_token:
+        return False
+    env = {k: (os.environ.get(k) or "").strip()
+           for k in ("JIRA_BASE_URL", "JIRA_EMAIL", "JIRA_API_TOKEN")}
+    return bool(env["JIRA_API_TOKEN"]) and (
+        credentials.base_url.strip().rstrip("/") == env["JIRA_BASE_URL"].rstrip("/")
+        and credentials.email.strip() == env["JIRA_EMAIL"]
+        and credentials.api_token == env["JIRA_API_TOKEN"]
+    )
 
 
 def _raise_if_unauthorized(resp, credentials: "JiraCredentials | None") -> None:
     """Turn a Jira 401 into a JiraAuthError with a clear, user-facing message.
 
-    Shared credential (env JIRA_EMAIL/JIRA_API_TOKEN) -> the "Jira connection
-    is down" wording, and the cached /api/v1/jira/health result flips to
-    "invalid" so the red banner appears on the next poll.  Per-user OAuth ->
-    "sign in again".  Never includes the response body or any credential.
+    * Per-user OAuth -> "sign in again".
+    * Exactly the shared env credential -> re-verify it against /myself
+      (get_jira_health(force=True)); only if THAT says invalid/missing do we
+      use the "Jira connection is down" wording (and the refreshed cache turns
+      the banner red).  A single failing request never flips the banner by
+      itself.
+    * Anything else (caller-supplied basic creds) -> a plain 401 message,
+      banner untouched.
+    Never includes the response body or any credential.
     """
     if resp.status_code != 401:
         return
     from core.jira_health import (
-        JiraAuthError, JIRA_DOWN_MESSAGE, mark_shared_credential_rejected,
+        JiraAuthError, JIRA_DOWN_MESSAGE, get_jira_health,
+        STATUS_INVALID, STATUS_MISSING,
     )
     if credentials is not None and credentials.access_token:
         raise JiraAuthError(OAUTH_EXPIRED_MESSAGE, shared=False)
-    is_shared = credentials is None or (
-        credentials.api_token == (os.environ.get("JIRA_API_TOKEN") or "")
-    )
-    if is_shared:
-        mark_shared_credential_rejected()
-    raise JiraAuthError(JIRA_DOWN_MESSAGE, shared=is_shared)
+    if _uses_shared_credential(credentials):
+        status = get_jira_health(force=True)["status"]
+        if status in (STATUS_INVALID, STATUS_MISSING):
+            raise JiraAuthError(JIRA_DOWN_MESSAGE, shared=True)
+    raise JiraAuthError(REQUEST_UNAUTHORIZED_MESSAGE, shared=False)
 
 
 # ---------------------------------------------------------------------------

@@ -155,10 +155,21 @@ def run(
             # JiraCredentials dataclass that jira_tool expects.
             credentials: JiraCredentials | None = None
             if jira_creds:
+                # Never pair the server's env token with a caller-supplied
+                # base_url/email: unless the caller supplied their own token,
+                # the site URL and account come from the env as well (otherwise
+                # a request could send the shared token to any host).
+                caller_token = jira_creds.get("JIRA_API_TOKEN")
+                if caller_token:
+                    base_url = jira_creds.get("JIRA_BASE_URL", os.environ.get("JIRA_BASE_URL", ""))
+                    email = jira_creds.get("JIRA_EMAIL", os.environ.get("JIRA_EMAIL", ""))
+                else:
+                    base_url = os.environ.get("JIRA_BASE_URL", "")
+                    email = os.environ.get("JIRA_EMAIL", "")
                 credentials = JiraCredentials(
-                    base_url=jira_creds.get("JIRA_BASE_URL",    os.environ.get("JIRA_BASE_URL", "")),
-                    email=jira_creds.get("JIRA_EMAIL",          os.environ.get("JIRA_EMAIL", "")),
-                    api_token=jira_creds.get("JIRA_API_TOKEN",  os.environ.get("JIRA_API_TOKEN", "")),
+                    base_url=base_url,
+                    email=email,
+                    api_token=caller_token or os.environ.get("JIRA_API_TOKEN", ""),
                     project_key=jira_creds.get("JIRA_PROJECT_KEY", os.environ.get("JIRA_PROJECT_KEY", "ST")),
                 )
             result = create_ticket(

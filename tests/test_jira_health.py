@@ -226,17 +226,97 @@ def test_health_probe_stays_200_and_never_calls_jira(client, monkeypatch, jira_a
 
 # --- ticket-creation path: clear message on 401 ---------------------------------------
 
-def test_create_ticket_401_shared_credential(monkeypatch):
+def _capture_posts(monkeypatch, status=401):
+    from core.tools import jira_tool
+    posts = []
+
+    def fake_post(url, **kwargs):
+        posts.append((url, kwargs))
+        return _Resp(status, "Client must be authenticated")
+
+    monkeypatch.setattr(jira_tool.requests, "post", fake_post)
+    return posts
+
+
+def _creds(**over):
+    from core.tools.jira_tool import JiraCredentials
+    base = dict(base_url="https://example.atlassian.net", email=FAKE_EMAIL,
+                api_token=FAKE_TOKEN, project_key="ST")
+    base.update(over)
+    return JiraCredentials(**base)
+
+
+def test_create_ticket_401_shared_credential_reverified(monkeypatch, jira_answers):
+    """401 with the env credential -> re-check /myself; it says 401 too -> red."""
     from core.tools import jira_tool
     monkeypatch.setenv("JIRA_PROJECT_KEY", "ST")
-    monkeypatch.setattr(jira_tool.requests, "post",
-                        lambda *a, **k: _Resp(401, "Client must be authenticated"))
+    _capture_posts(monkeypatch)
+    jira_answers.result = 401
     with pytest.raises(JiraAuthError) as ei:
         jira_tool.create_ticket(summary="s", description="d")
     assert str(ei.value) == JIRA_DOWN_MESSAGE
     assert ei.value.shared is True
-    # The banner flips to red on the next poll without waiting for the cache.
+    assert len(jira_answers.calls) == 1            # forced /myself re-check
     assert jira_health.peek_jira_health()["status"] == "invalid"
+
+
+def test_shared_401_but_myself_ok_does_not_flip_banner(monkeypatch, jira_answers):
+    """A failing request alone must not turn the banner red."""
+    from core.tools import jira_tool
+    monkeypatch.setenv("JIRA_PROJECT_KEY", "ST")
+    _capture_posts(monkeypatch)
+    jira_answers.result = 200
+    with pytest.raises(JiraAuthError) as ei:
+        jira_tool.create_ticket(summary="s", description="d")
+    assert ei.value.shared is False
+    assert str(ei.value) != JIRA_DOWN_MESSAGE
+    assert jira_health.peek_jira_health()["status"] == "ok"
+
+
+def test_exact_env_credentials_object_counts_as_shared(monkeypatch, jira_answers):
+    from core.tools import jira_tool
+    _capture_posts(monkeypatch)
+    jira_answers.result = 401
+    with pytest.raises(JiraAuthError) as ei:
+        jira_tool.create_ticket(summary="s", description="d", credentials=_creds())
+    assert ei.value.shared is True
+
+
+@pytest.mark.parametrize("over", [
+    {"base_url": "https://evil.example.com"},
+    {"email": "someone-else@example.org"},
+    {"api_token": "callers-own-token"},
+])
+def test_non_matching_credentials_never_touch_banner(monkeypatch, jira_answers, over):
+    from core.tools import jira_tool
+    _capture_posts(monkeypatch)
+    with pytest.raises(JiraAuthError) as ei:
+        jira_tool.create_ticket(summary="s", description="d", credentials=_creds(**over))
+    assert ei.value.shared is False
+    assert str(ei.value) != JIRA_DOWN_MESSAGE
+    assert jira_answers.calls == []                # no re-check, no cache write
+    assert jira_health.peek_jira_health() is None
+
+
+def test_env_token_never_sent_to_caller_base_url(monkeypatch):
+    """Caller-supplied base_url + the env token -> the env base_url is used."""
+    from core.tools import jira_tool
+    posts = _capture_posts(monkeypatch, status=201)
+    creds = _creds(base_url="https://evil.example.com", email="attacker@example.org")
+    base, auth, _ = jira_tool._client(creds)
+    assert base == "https://example.atlassian.net"
+    assert auth.username == FAKE_EMAIL
+    with pytest.raises(Exception):
+        jira_tool.create_ticket(summary="s", description="d", credentials=creds)
+    assert posts and all(u.startswith("https://example.atlassian.net/") for u, _ in posts)
+    assert not any("evil" in u for u, _ in posts)
+
+
+def test_callers_own_token_may_use_callers_base_url():
+    from core.tools import jira_tool
+    base, auth, _ = jira_tool._client(
+        _creds(base_url="https://other.atlassian.net", api_token="callers-own-token"))
+    assert base == "https://other.atlassian.net"
 
 
 def test_create_ticket_401_oauth_says_sign_in_again(monkeypatch):
