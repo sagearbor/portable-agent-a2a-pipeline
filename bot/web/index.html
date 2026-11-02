@@ -875,6 +875,60 @@
       align-self: end;
     }
     .bulk-apply-bar .bulk-btn:hover { background: var(--accent-hover); }
+
+    /* -----------------------------------------------------------------------
+       Group-by toggle + "Updates to existing tickets"
+    ----------------------------------------------------------------------- */
+    .group-toggle {
+      display: inline-flex; align-items: center; gap: 0; margin: 4px 0 12px;
+      font-size: 12px;
+    }
+    .group-toggle .group-label { font-weight: 600; color: #4a5066; margin-right: 8px; }
+    .group-toggle button {
+      padding: 5px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+      background: #fff; color: #4a5066; border: 1px solid #d0daf0;
+    }
+    .group-toggle button:first-of-type { border-radius: 4px 0 0 4px; }
+    .group-toggle button:last-of-type  { border-radius: 0 4px 4px 0; border-left: none; }
+    .group-toggle button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+    .section-heading { font-size: 15px; font-weight: 700; color: #2d3142; margin: 14px 0 6px; }
+    .updates-section { margin-top: 22px; border-top: 1px solid var(--border); padding-top: 6px; }
+    .update-card {
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 10px 12px; margin-bottom: 8px;
+      background: #f7f9fe; border: 1px solid #d0daf0; border-radius: var(--radius);
+      font-size: 12px; color: #2d3142;
+    }
+    .update-card.low-conf { background: #fbfbfc; border-style: dashed; }
+    .update-card input[type="checkbox"] { margin-top: 3px; }
+    .update-card .upd-body { flex: 1; min-width: 0; }
+    .update-card .upd-head { font-size: 13px; margin-bottom: 4px; }
+    .update-card .upd-head a { color: #1a4f9c; font-weight: 700; }
+    .upd-action {
+      display: inline-block; padding: 1px 7px; margin-right: 6px; border-radius: 999px;
+      font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .03em;
+      background: #e8f0fe; color: #1a4f9c;
+    }
+    .upd-action.transition { background: #e8f8f0; color: #1e6644; }
+    .upd-action.assign     { background: #f3eafd; color: #5b2a91; }
+    .upd-preview { margin: 4px 0; }
+    .upd-preview .arrow { color: var(--text-muted); margin: 0 6px; }
+    .upd-preview .before { color: #8b90a0; text-decoration: line-through; }
+    .upd-preview .after  { font-weight: 600; }
+    .upd-preview blockquote {
+      margin: 3px 0 0; padding: 4px 8px; border-left: 3px solid #d0daf0;
+      background: #fff; white-space: pre-wrap;
+    }
+    .upd-evidence { color: #6b7080; font-style: italic; margin-top: 3px; }
+    .upd-meta { color: var(--text-muted); font-size: 11px; margin-top: 3px; }
+    .topic-row td {
+      background: #eef1f8; font-weight: 700; color: #2d3142; font-size: 13px;
+      padding: 8px 10px; border-top: 2px solid #d0daf0;
+    }
+    .topic-update-row td { background: #fafbfe; }
+    .topic-update-row .update-card { margin: 0; position: sticky; left: 0; max-width: 900px; }
+    .dry-run-label { font-size: 12px; color: #4a5066; display: inline-flex; gap: 6px; align-items: center;
+                     text-transform: none; letter-spacing: normal; font-weight: 500; margin: 0; }
   </style>
 </head>
 <body>
@@ -1117,7 +1171,15 @@
   ----------------------------------------------------------------------- -->
   <div class="card" id="section-tickets" style="display:none;">
     <h2>Step 3 — Review Draft Tickets</h2>
-    <p class="subtitle">Edit fields, uncheck rows to skip, then click "Create Selected Tickets".</p>
+    <p class="subtitle">Edit fields, uncheck rows to skip, then click "Create Selected Tickets". Proposed changes to tickets that already exist are listed separately and are only written when you click "Apply Selected Updates".</p>
+
+    <!-- Group-by toggle (choice persisted in localStorage) -->
+    <div class="group-toggle" id="group-by-toggle" role="radiogroup" aria-label="Group by">
+      <span class="group-label">Group by:</span>
+      <button type="button" data-mode="write" role="radio" aria-checked="true" class="active">Write vs update</button>
+      <button type="button" data-mode="topic" role="radio" aria-checked="false">Topic</button>
+    </div>
+    <div class="section-heading" id="new-tickets-heading">New tickets</div>
 
     <!-- Rejected items panel (populated by JS after pipeline run) -->
     <div class="rejected-panel" id="rejected-panel" style="display:none;">
@@ -1222,6 +1284,23 @@
 
     <div class="alert alert-error"   id="submit-error"></div>
     <div class="alert alert-success" id="submit-success"></div>
+
+    <!-- Proposed updates to EXISTING tickets (from /api/v1/suggest-updates).
+         Nothing is written to Jira until "Apply Selected Updates" is clicked. -->
+    <div class="updates-section" id="updates-section" style="display:none;">
+      <div class="section-heading" id="updates-heading">Updates to existing tickets</div>
+      <p class="subtitle" id="updates-subtitle">The transcript mentions work that already has an open ticket. Tick the changes you want; low-confidence ones start unticked.</p>
+      <div id="updates-list"></div>
+      <div class="submit-bar">
+        <label class="dry-run-label" title="Show what would happen without writing anything to Jira">
+          <input type="checkbox" id="updates-dry-run" /> Dry run (preview only, writes nothing)
+        </label>
+        <span class="count-label" id="updates-selected-count">0 updates selected</span>
+        <button class="btn btn-success" id="btn-apply-updates" disabled>Apply Selected Updates</button>
+      </div>
+      <div class="alert alert-error"   id="updates-error"></div>
+      <div class="alert alert-success" id="updates-success"></div>
+    </div>
   </div>
 
 </main>
@@ -1336,6 +1415,8 @@ const state = {
   ssoUser: null,      // {email, name, valid} when signed in via Azure AD SSO; null otherwise
   jiraContext: { epics: [], sprints: [], fix_versions: [], users: [] },
   _batchId: null,     // set at submit time for label display
+  updates: [],        // proposed updates to existing tickets (suggest-updates)
+  topicGroups: [],    // [{topic, draft_indices, update_ids}] for "Group by: Topic"
 };
 
 /* =========================================================================
@@ -1871,6 +1952,23 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
     dbg(5, '[Pipeline] Tickets:', data.tickets ? data.tickets.length : 'none');
 
     if (!data.tickets || data.tickets.length === 0) {
+      // No NEW tickets — but the transcript may still be news about existing
+      // ones ("my X issues are resolved"), so look for updates before giving up.
+      if (!(data.status === 'error' || data.error_message)) {
+        state.draftTickets = [];
+        state.rejectedItems = data.rejected || [];
+        showAlert(infoEl, 'No new tickets — checking for updates to existing tickets...');
+        const upd = await suggestUpdates(transcript);
+        hideAlert(infoEl);
+        if (upd && upd.updates && upd.updates.length) {
+          applySuggestions(upd);
+          renderTickets();
+          document.getElementById('section-tickets').style.display = 'block';
+          document.getElementById('section-tickets').scrollIntoView({ behavior: 'smooth' });
+          updateNavSteps();
+          return;
+        }
+      }
       // Distinguish "pipeline errored" from "pipeline succeeded but nothing to do"
       if (data.status === 'error' || data.error_message) {
         showAlert(infoEl, `Pipeline error: ${data.error_message || 'unknown — check server logs'}`);
@@ -1899,6 +1997,12 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       deleted:     false,
     }));
     state.rejectedItems = data.rejected || [];
+    state.updates = [];
+    state.topicGroups = [];
+
+    // Look for updates to EXISTING tickets in parallel with the duplicate
+    // check and enrichment (read-only; nothing is written until Apply).
+    const updatesPromise = suggestUpdates(transcript);
 
     // Check for duplicate tickets in Jira
     try {
@@ -1963,6 +2067,11 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       hideAlert(infoEl);
     }
 
+    // Merge proposed updates (also unticks drafts an update already covers).
+    showAlert(infoEl, 'Checking existing tickets for updates...');
+    applySuggestions(await updatesPromise);
+    hideAlert(infoEl);
+
     // Auto-calculate dates from anchor if enrichment didn't provide them
     const hasAnyDates = state.draftTickets.some(t => t.start_date || t.due_date);
     if (!hasAnyDates) {
@@ -2009,7 +2118,7 @@ function renderTickets() {
   const tbody = document.getElementById('ticket-tbody');
   tbody.innerHTML = '';
 
-  state.draftTickets.forEach((ticket, idx) => {
+  const buildRow = (ticket, idx) => {
     const tr = document.createElement('tr');
     tr.dataset.idx = idx;
     if (ticket.deleted) tr.classList.add('deleted');
@@ -2051,6 +2160,7 @@ function renderTickets() {
       <td class="col-sum">
         <input type="text" class="summary-input" data-idx="${idx}" value="${escHtml(ticket.summary)}" />
         ${ticket.result_badge ? ticket.result_badge : ''}
+        ${ticket.covered_by ? `<div class="dup-warning">Already tracked in <a href="${escHtml(jiraBrowseUrl(ticket.covered_by))}" target="_blank">${escHtml(ticket.covered_by)}</a> — proposed as an update instead (unticked)</div>` : ''}
         ${ticket.duplicate_warning ? ticket.duplicate_warning.map(d =>
           `<div class="dup-warning">Possible duplicate: <a href="${escHtml(d.url)}" target="_blank">${escHtml(d.key)}</a> — "${escHtml(d.summary)}"</div>`
         ).join('') : ''}
@@ -2115,8 +2225,15 @@ function renderTickets() {
       </td>
     `;
 
-    tbody.appendChild(tr);
-  });
+    return tr;
+  };
+
+  if (getGroupMode() === 'topic') {
+    renderTopicRows(tbody, buildRow);
+  } else {
+    state.draftTickets.forEach((ticket, idx) => tbody.appendChild(buildRow(ticket, idx)));
+  }
+  bindUpdateChecks(tbody);
 
   // Bind row checkbox changes
   tbody.querySelectorAll('.row-check').forEach(chk => {
@@ -2263,8 +2380,253 @@ function renderTickets() {
   renderRejectedPanel();
   populateBulkDropdowns();
   refreshAssigneeDatalist();  // keep the shared assignee autocomplete in sync
+  renderUpdates();
   sizeTicketTableWrap();   // row count changed -> re-fit the scroll box
 }
+
+/* =========================================================================
+   Updates to existing tickets + "Group by" toggle
+   - suggestUpdates(): POST /api/v1/suggest-updates (read-only)
+   - renderUpdates(): the "Updates to existing tickets" section
+   - renderTopicRows(): Topic mode — drafts + updates under topic headings
+   - Apply button: POST /api/v1/apply-updates with ONLY the ticked updates
+========================================================================= */
+const GROUP_MODE_KEY = 'sagejirabot.groupBy';
+let _groupMode = 'write';
+try {
+  const saved = window.localStorage.getItem(GROUP_MODE_KEY);
+  if (saved === 'topic' || saved === 'write') _groupMode = saved;
+} catch (_) { /* storage blocked — default to "Write vs update" */ }
+
+function getGroupMode() { return _groupMode; }
+
+function setGroupMode(mode) {
+  _groupMode = (mode === 'topic') ? 'topic' : 'write';
+  try { window.localStorage.setItem(GROUP_MODE_KEY, _groupMode); } catch (_) { /* ignore */ }
+  syncGroupToggle();
+  renderTickets();
+}
+
+function syncGroupToggle() {
+  document.querySelectorAll('#group-by-toggle button').forEach(b => {
+    const on = b.dataset.mode === _groupMode;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-checked', on ? 'true' : 'false');
+  });
+  const h = document.getElementById('new-tickets-heading');
+  if (h) h.textContent = _groupMode === 'topic' ? 'New tickets and updates, by topic' : 'New tickets';
+}
+
+document.querySelectorAll('#group-by-toggle button').forEach(b => {
+  b.addEventListener('click', () => setGroupMode(b.dataset.mode));
+});
+syncGroupToggle();
+
+function jiraBrowseUrl(key) {
+  const base = (state.baseUrl || '').replace(/\/+$/, '');
+  return base ? `${base}/browse/${encodeURIComponent(key)}` : '#';
+}
+
+const _ACTION_LABEL = {
+  comment: 'Comment', transition: 'Change status',
+  append_description: 'Add to description', assign: 'Assign',
+};
+
+function updateCardHtml(u, i) {
+  const pct = Math.round((u.confidence || 0) * 100);
+  let preview = '';
+  if (u.action === 'transition' || u.action === 'assign') {
+    const what = u.action === 'transition' ? 'Status' : 'Assignee';
+    preview = `${what}: <span class="before">${escHtml(u.before || '—')}</span><span class="arrow">&rarr;</span><span class="after">${escHtml(u.after || u.payload)}</span>`;
+  } else if (u.action === 'comment') {
+    preview = `New comment:<blockquote>${escHtml(u.payload)}</blockquote>`;
+  } else {
+    preview = `Append to description:<blockquote>${escHtml(u.payload)}</blockquote>`;
+  }
+  let badge = '';
+  if (u.result) {
+    const cls = u.result.status === 'applied' ? 'badge-created'
+              : u.result.status === 'dry_run' ? 'badge-draft' : 'badge-error';
+    const txt = u.result.status === 'applied' ? 'Applied'
+              : u.result.status === 'dry_run' ? 'Dry run — not written' : 'Failed';
+    badge = ` <span class="ticket-status-badge ${cls}" title="${escHtml(u.result.message || '')}">${txt}</span>`
+          + (u.result.status === 'failed' ? `<div class="upd-meta" style="color:#c0392b;">${escHtml(u.result.message || '')}</div>` : '');
+  }
+  const done = u.result && u.result.status === 'applied';
+  return `
+    <div class="update-card${u.default_checked ? '' : ' low-conf'}">
+      <input type="checkbox" class="upd-check" data-uid="${i}" ${u.checked && !done ? 'checked' : ''} ${done ? 'disabled' : ''} aria-label="Apply this update" />
+      <div class="upd-body">
+        <div class="upd-head">
+          <span class="upd-action ${escHtml(u.action)}">${escHtml(_ACTION_LABEL[u.action] || u.action)}</span>
+          <a href="${escHtml(u.url || jiraBrowseUrl(u.issue_key))}" target="_blank" rel="noopener">${escHtml(u.issue_key)}</a>
+          <span class="text-muted">${escHtml(u.issue_type || '')}</span>
+          — ${escHtml(u.issue_summary || '')}${badge}
+        </div>
+        <div class="upd-preview">${preview}</div>
+        ${u.evidence ? `<div class="upd-evidence">Heard: “${escHtml(u.evidence)}”${u.evidence_verified ? '' : ' <span title="This quote was not found word-for-word in the transcript">(paraphrased)</span>'}</div>` : ''}
+        <div class="upd-meta">Confidence ${pct}%${u.default_checked ? '' : ' — low, left unticked'}${getGroupMode() === 'write' && u.topic ? ' · Topic: ' + escHtml(u.topic) : ''}${u.rationale ? ' · ' + escHtml(u.rationale) : ''}</div>
+      </div>
+    </div>`;
+}
+
+function renderTopicRows(tbody, buildRow) {
+  const ncol = document.querySelectorAll('#ticket-table thead th').length || 14;
+  const idToIdx = {};
+  state.updates.forEach((u, i) => { idToIdx[u.id] = i; });
+  let groups = (state.topicGroups || []).map(g => ({
+    topic: g.topic, draft_indices: (g.draft_indices || []).slice(), update_ids: (g.update_ids || []).slice(),
+  }));
+  // Anything the server grouping didn't mention goes under "Other".
+  const seenD = new Set(), seenU = new Set();
+  groups.forEach(g => { g.draft_indices.forEach(d => seenD.add(d)); g.update_ids.forEach(id => seenU.add(id)); });
+  const leftD = state.draftTickets.map((_, i) => i).filter(i => !seenD.has(i));
+  const leftU = state.updates.map(u => u.id).filter(id => !seenU.has(id));
+  if (leftD.length || leftU.length) {
+    let other = groups.find(g => g.topic === 'Other');
+    if (!other) { other = { topic: 'Other', draft_indices: [], update_ids: [] }; groups.push(other); }
+    other.draft_indices.push(...leftD); other.update_ids.push(...leftU);
+  }
+  groups.forEach(g => {
+    const drafts = g.draft_indices.filter(i => i >= 0 && i < state.draftTickets.length);
+    const ups = g.update_ids.filter(id => id in idToIdx);
+    if (!drafts.length && !ups.length) return;
+    const head = document.createElement('tr');
+    head.className = 'topic-row';
+    const nNew = drafts.length, nUpd = ups.length;
+    head.innerHTML = `<td colspan="${ncol}">${escHtml(g.topic)} <span class="text-muted" style="font-weight:400;">— ${nNew} new, ${nUpd} update${nUpd !== 1 ? 's' : ''}</span></td>`;
+    tbody.appendChild(head);
+    ups.forEach(id => {
+      const tr = document.createElement('tr');
+      tr.className = 'topic-update-row';
+      tr.innerHTML = `<td colspan="${ncol}">${updateCardHtml(state.updates[idToIdx[id]], idToIdx[id])}</td>`;
+      tbody.appendChild(tr);
+    });
+    drafts.forEach(i => tbody.appendChild(buildRow(state.draftTickets[i], i)));
+  });
+}
+
+function bindUpdateChecks(root) {
+  root.querySelectorAll('.upd-check').forEach(chk => {
+    chk.addEventListener('change', function () {
+      const i = parseInt(this.dataset.uid);
+      if (state.updates[i]) state.updates[i].checked = this.checked;
+      updateUpdatesCount();
+    });
+  });
+}
+
+function updateUpdatesCount() {
+  const n = state.updates.filter(u => u.checked && !(u.result && u.result.status === 'applied')).length;
+  document.getElementById('updates-selected-count').textContent = `${n} update${n !== 1 ? 's' : ''} selected`;
+  document.getElementById('btn-apply-updates').disabled = n === 0;
+}
+
+function renderUpdates() {
+  const section = document.getElementById('updates-section');
+  const list = document.getElementById('updates-list');
+  if (!state.updates.length) { section.style.display = 'none'; list.innerHTML = ''; return; }
+  section.style.display = 'block';
+  const topic = getGroupMode() === 'topic';
+  document.getElementById('updates-heading').style.display = topic ? 'none' : 'block';
+  document.getElementById('updates-subtitle').textContent = topic
+    ? 'Updates are shown in the table above, under their topic. Nothing is written until you click "Apply Selected Updates".'
+    : 'The transcript mentions work that already has an open ticket. Tick the changes you want; low-confidence ones start unticked. Nothing is written until you click "Apply Selected Updates".';
+  list.innerHTML = topic ? '' : state.updates.map((u, i) => updateCardHtml(u, i)).join('');
+  if (!topic) bindUpdateChecks(list);
+  updateUpdatesCount();
+}
+
+async function suggestUpdates(transcript) {
+  try {
+    dbg(5, '[Updates] POST', `${BASE}/api/v1/suggest-updates`);
+    const resp = await fetch(`${BASE}/api/v1/suggest-updates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transcript,
+        project_key: state.projectKey,
+        base_url: state.baseUrl,
+        drafts: state.draftTickets.map(t => ({ summary: t.summary || '', description: t.description || '' })),
+      }),
+    });
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      dbg(1, '[Updates] suggest failed (non-fatal):', resp.status, extractErrorMsg(err.detail, ''));
+      return null;
+    }
+    const data = await resp.json();
+    dbg(5, '[Updates] proposals:', (data.updates || []).length, 'rejected:', (data.rejected || []).length,
+        'candidates:', data.candidates_considered);
+    return data;
+  } catch (e) {
+    dbg(1, '[Updates] suggest failed (non-fatal):', e);
+    return null;
+  }
+}
+
+function applySuggestions(data) {
+  if (!data) { state.updates = []; state.topicGroups = []; return; }
+  state.updates = (data.updates || []).map(u => ({ ...u, checked: !!u.default_checked, result: null }));
+  state.topicGroups = data.topic_groups || [];
+  Object.entries(data.covered_drafts || {}).forEach(([idx, key]) => {
+    const t = state.draftTickets[parseInt(idx)];
+    if (t) { t.covered_by = key; t.checked = false; }
+  });
+}
+
+document.getElementById('btn-apply-updates').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-apply-updates');
+  const errEl = document.getElementById('updates-error');
+  const okEl = document.getElementById('updates-success');
+  hideAlert(errEl); hideAlert(okEl);
+  const selected = state.updates.filter(u => u.checked && !(u.result && u.result.status === 'applied'));
+  if (!selected.length) return;
+  const dryRun = document.getElementById('updates-dry-run').checked;
+  setLoading(btn, true);
+  try {
+    const resp = await fetch(`${BASE}/api/v1/apply-updates`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        project_key: state.projectKey,
+        dry_run: dryRun,
+        updates: selected.map(u => ({
+          id: u.id, issue_key: u.issue_key, action: u.action, payload: u.payload,
+          transition_id: u.transition_id || null, target_status: u.target_status || null,
+          account_id: u.account_id || null, after: u.after || null,
+        })),
+      }),
+    });
+    if (resp.status === 401) throw new Error('Sign in to Jira (Step 1) to apply updates — they are written as you.');
+    if (!resp.ok) {
+      const data = await resp.json().catch(() => ({}));
+      throw new Error(extractErrorMsg(data.detail, `Apply error ${resp.status}`));
+    }
+    const data = await resp.json();
+    const byId = {};
+    state.updates.forEach(u => { byId[u.id] = u; });
+    (data.results || []).forEach(r => {
+      const u = byId[r.id];
+      if (!u) return;
+      u.result = { status: r.status, message: r.message };
+      if (r.status === 'applied') u.checked = false;
+    });
+    renderTickets();
+    if (data.dry_run) {
+      showAlert(okEl, `Dry run: ${selected.length} update${selected.length !== 1 ? 's' : ''} checked — nothing was written to Jira.`);
+    } else if (data.failed === 0) {
+      showAlert(okEl, `All ${data.applied} update${data.applied !== 1 ? 's' : ''} applied in Jira.`);
+    } else {
+      showAlert(errEl, `${data.applied} applied, ${data.failed} failed — see the red badges for each reason.`);
+      if (window.jiraBanner) window.jiraBanner.refresh();
+    }
+  } catch (err) {
+    showAlert(errEl, err.message);
+  } finally {
+    setLoading(btn, false);
+  }
+});
 
 /* =========================================================================
    Rejected items panel — shows what Agent 2 filtered out

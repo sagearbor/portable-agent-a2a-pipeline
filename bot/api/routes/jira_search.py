@@ -17,6 +17,7 @@ import requests
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
+from core.jql import jql_quote, jql_text_quote, validate_project_key
 from bot.api.routes._jira_helpers import (
     validate_base_url,
     get_jira_request_config,
@@ -121,6 +122,11 @@ async def check_duplicates(
 
     jira_search_url = f"{cfg.base}/rest/api/3/search/jql"
 
+    try:
+        project_key = validate_project_key(req.project_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     results: list[DuplicateResult] = []
 
     for summary in req.summaries:
@@ -132,10 +138,13 @@ async def check_duplicates(
             continue
 
         # Build JQL text search
+        # Both values are quoted/escaped: project_key comes straight from the
+        # request body and must not be able to close the quote and append
+        # its own JQL clauses.
         keyword_text = " ".join(keywords)
         jql = (
-            f'project = "{req.project_key}" '
-            f'AND summary ~ "{keyword_text}" '
+            f'project = {jql_quote(project_key)} '
+            f'AND summary ~ {jql_text_quote(keyword_text)} '
             f'AND statusCategory != Done'
         )
 
