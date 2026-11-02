@@ -24,11 +24,19 @@ TRANSCRIPT = (
 )
 
 
+QUALITY_FLAGS = ("UPDATES_RETRIEVAL",)
+
+
 @pytest.fixture(autouse=True)
 def _env(monkeypatch):
     monkeypatch.setenv("JIRA_BASE_URL", "https://example.atlassian.net")
     monkeypatch.setenv("JIRA_EMAIL", "bot@example.org")
     monkeypatch.setenv("JIRA_API_TOKEN", SHARED_TOKEN)
+    # This file pins the ORIGINAL behaviour: every quality piece switched off
+    # proves that turning a flag off restores it.  The pieces themselves are
+    # tested (switched on) in tests/test_update_quality.py.
+    for flag in QUALITY_FLAGS:
+        monkeypatch.setenv(flag, "0")
 
 
 # ---------------------------------------------------------------------------

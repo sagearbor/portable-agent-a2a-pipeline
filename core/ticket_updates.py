@@ -40,6 +40,7 @@ from core.clients.client import (
 )
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, ENRICH_MODEL
 from core.dcri_llm import llm_action
+from core import update_retrieval
 from core.jql import jql_quote, is_issue_key, validate_project_key
 from core.tools.jira_tool import JiraCredentials, _client, _raise_if_unauthorized
 
@@ -507,6 +508,8 @@ def validate_proposals(
             "confidence": round(conf, 2),
             "rationale":  str(item.get("rationale") or "").strip()[:300],
         }
+        if item.get("item_id"):
+            upd["item_id"] = str(item["item_id"])[:20]
 
         if action == "transition":
             if key not in transitions_cache:
@@ -635,23 +638,52 @@ def group_by_topic(drafts_count: int, draft_topics: dict, updates: list[dict]) -
 # Orchestration
 # ---------------------------------------------------------------------------
 
+def _recompute_covered(result: dict) -> None:
+    """Drop covered-draft entries whose issue no longer has a confident update
+    (after later pieces removed some)."""
+    keys = {u["issue_key"] for u in result["updates"] if not u.get("weak_match")}
+    result["covered_drafts"] = {i: k for i, k in result["covered_drafts"].items() if k in keys}
+
+
 def suggest_ticket_updates(
     transcript: str,
     project_keys: list[str],
     drafts: list[dict] | None = None,
     credentials: JiraCredentials | None = None,
+    *,
+    candidates: list[dict] | None = None,
+    transitions_fn=fetch_transitions,
+    user_fn=find_assignable_user,
 ) -> dict:
-    """Read-only: candidates -> LLM -> validated proposals.  Never writes to Jira."""
+    """Read-only: candidates -> LLM -> validated proposals.  Never writes to Jira.
+
+    ``candidates`` / ``transitions_fn`` / ``user_fn`` let the offline
+    regression harness supply fixture tickets instead of reading Jira.
+    """
     drafts = drafts or []
-    candidates = fetch_candidate_issues(project_keys, credentials)
+    if candidates is None:
+        candidates = fetch_candidate_issues(project_keys, credentials)
     if not candidates:
         groups = group_by_topic(len(drafts), {}, [])
         return {"updates": [], "rejected": [], "draft_topics": {}, "covered_drafts": {},
                 "topic_groups": groups, "candidates_considered": 0}
-    raw = propose_updates(transcript, candidates, drafts)
-    result = validate_proposals(raw, candidates, len(drafts), transcript, credentials)
+
+    meta: dict = {}
+    if update_retrieval.retrieval_enabled():                       # piece A
+        raw, meta = update_retrieval.propose_with_retrieval(
+            transcript, candidates, drafts, _llm_candidate_view, MAX_TRANSCRIPT_CHARS)
+    else:
+        raw = propose_updates(transcript, candidates, drafts)
+    result = validate_proposals(raw, candidates, len(drafts), transcript, credentials,
+                                transitions_fn=transitions_fn, user_fn=user_fn)
+    result["rejected"].extend(meta.get("out_of_list") or [])
+    _recompute_covered(result)
+    for i, u in enumerate(result["updates"]):
+        u["id"] = f"u{i}"
     result["topic_groups"] = group_by_topic(len(drafts), result["draft_topics"], result["updates"])
     result["candidates_considered"] = len(candidates)
+    result["work_items"] = len(meta.get("items") or [])
+    result["work_items_with_candidates"] = meta.get("items_with_candidates")
     print(f"[ticket_updates] proposed={len(raw.get('updates') or [])} "
           f"valid={len(result['updates'])} rejected={len(result['rejected'])} "
           f"covered_drafts={len(result['covered_drafts'])}")
