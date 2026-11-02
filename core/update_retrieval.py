@@ -265,9 +265,9 @@ MATCH_PROMPT = (
 
 
 def match_model() -> str | None:
-    """Model for the matching call.  Piece B overrides this default."""
-    from core.config.settings import ENRICH_MODEL
-    return env_str("UPDATES_MATCH_MODEL", ENRICH_MODEL)
+    """Model for the matching call (piece B: UPDATES_MATCH_MODEL)."""
+    from core.update_verifier import match_model as _m
+    return _m()
 
 
 def match_items(items: list[dict], ranked: dict[str, list[dict]], candidates: list[dict],

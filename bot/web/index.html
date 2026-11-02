@@ -2466,11 +2466,12 @@ function updateCardHtml(u, i) {
         </div>
         <div class="upd-preview">${preview}</div>
         ${u.evidence ? `<div class="upd-evidence">Heard: “${escHtml(u.evidence)}”</div>` : ''}
+        ${u.verified ? `<div class="upd-meta" style="color:#1e8449;" title="A second, independent model call checked that this is the same piece of work and that this change is justified.${u.verifier_action_reason ? ' On this change: ' + escHtml(u.verifier_action_reason) : ''}">&#10003; Second check: ${escHtml(u.verifier_reason || 'same piece of work')}</div>` : ''}
         ${u.weak_match ? '<div class="upd-meta" style="color:#b9770e;">The quote shares no distinctive words with this ticket — make sure it is the right ticket before ticking.</div>' : ''}
         <div class="upd-meta">${u.evidence_source === 'transcript'
           ? '<span title="The quote above appears word-for-word in your transcript">Based on: transcript</span>'
           : '<span style="color:#b9770e;" title="The quote was NOT found word-for-word in the transcript, so this suggestion rests on the model reading the existing ticket text. Check it before ticking.">Based on: ticket content / inference — check before ticking</span>'}
-          · Confidence ${pct}%${u.default_checked ? '' : ((u.action === 'transition' || u.action === 'assign') ? ' — status/assignee changes always start unticked' : ' — left unticked')}${getGroupMode() === 'write' && u.topic ? ' · Topic: ' + escHtml(u.topic) : ''}${u.rationale ? ' · ' + escHtml(u.rationale) : ''}</div>
+          · ${u.verified ? 'Matcher self-rated' : 'Confidence'} ${pct}%${u.default_checked ? '' : ((u.action === 'transition' || u.action === 'assign') ? ' — status/assignee changes always start unticked' : ' — left unticked')}${getGroupMode() === 'write' && u.topic ? ' · Topic: ' + escHtml(u.topic) : ''}${u.rationale ? ' · ' + escHtml(u.rationale) : ''}</div>
       </div>
     </div>`;
 }

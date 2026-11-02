@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from core import dcri_llm, ticket_updates as tu, update_llm, update_retrieval as ur
+from core import dcri_llm, ticket_updates as tu, update_llm, update_retrieval as ur, update_verifier as uv
 
-ALL_FLAGS = ("UPDATES_RETRIEVAL",)
+ALL_FLAGS = ("UPDATES_RETRIEVAL", "UPDATES_VERIFIER")
 
 TRANSCRIPT = (
     "All for Sage. My Sages AI foundry issues are resolved. I have a new AI doc follow up "
@@ -246,3 +246,98 @@ def test_retrieval_off_uses_single_legacy_call(monkeypatch):
     r = _install(monkeypatch, {"legacy": {"updates": []}})
     _suggest()
     assert [w for w, _ in r.calls] == ["legacy"]
+
+
+# ---------------------------------------------------------------------------
+# B. Stronger matcher + verifier
+# ---------------------------------------------------------------------------
+
+MATCH_OK = {"matches": [{"item_id": "w1", "issue_keys": ["ADP-17", "ADP-21"]}],
+            "updates": [
+                {"item_id": "w1", "issue_key": "ADP-17", "action": "comment",
+                 "payload": "AI Foundry issues are resolved.",
+                 "evidence": "My Sages AI foundry issues are resolved", "confidence": 0.9},
+                {"item_id": "w1", "issue_key": "ADP-17", "action": "transition", "payload": "Closed",
+                 "evidence": "My Sages AI foundry issues are resolved", "confidence": 0.8},
+                {"item_id": "w1", "issue_key": "ADP-21", "action": "comment",
+                 "payload": "AI Foundry issues are resolved.",
+                 "evidence": "My Sages AI foundry issues are resolved", "confidence": 0.7},
+            ]}
+
+
+def _verify_by_key(table):
+    """table: issue_key -> verifier JSON (or Exception to raise)."""
+    def fn(kw):
+        user = kw["messages"][1]["content"]
+        for key, body in table.items():
+            if f'"key": "{key}"' in user:
+                if isinstance(body, Exception):
+                    raise body
+                return body
+        raise AssertionError("unexpected pair")
+    return fn
+
+
+def test_models_default_to_strongest_and_are_env_switchable(monkeypatch):
+    monkeypatch.delenv("UPDATES_MATCH_MODEL", raising=False)
+    monkeypatch.delenv("UPDATES_VERIFY_MODEL", raising=False)
+    assert uv.match_model() == "gpt-5.5" and uv.verify_model() == "gpt-5.5"
+    monkeypatch.setenv("UPDATES_MATCH_MODEL", "gpt-5.4-mini")
+    assert uv.match_model() == "gpt-5.4-mini" and ur.match_model() == "gpt-5.4-mini"
+
+
+def test_verifier_drops_no_pairs_and_unjustified_actions(monkeypatch):
+    monkeypatch.setenv("UPDATES_RETRIEVAL", "1")
+    monkeypatch.setenv("UPDATES_VERIFIER", "1")
+    yes_both = {"same_work": "yes", "reason": "Both are about the AI Foundry permission issues.",
+                "actions": [{"index": 0, "justified": "yes", "reason": "accurate"},
+                            {"index": 1, "justified": "no", "reason": "epic not said done"}]}
+    r = _install(monkeypatch, {"split": SPLIT, "match": MATCH_OK, "verify": _verify_by_key({
+        "ADP-17": yes_both,
+        "ADP-21": {"same_work": "no", "reason": "epic", "actions": []}})})
+    res = _suggest()
+    kept = [(u["issue_key"], u["action"]) for u in res["updates"]]
+    assert kept == [("ADP-17", "comment")]
+    assert res["updates"][0]["verified"] is True
+    assert "AI Foundry" in res["updates"][0]["verifier_reason"]
+    reasons = {(x["issue_key"], x["action"]): x["reason"] for x in res["rejected"]}
+    assert reasons[("ADP-17", "transition")] == "verifier: action not justified"
+    assert reasons[("ADP-21", "comment")] == "verifier: not the same work"
+    verify_calls = [kw for w, kw in r.calls if w == "verify"]
+    assert len(verify_calls) == 2                        # one call per (item, ticket) pair
+    assert all(kw["max_completion_tokens"] >= 40000 and "temperature" not in kw for kw in verify_calls)
+    assert all(kw["model"] == "gpt-5.5" for kw in verify_calls)
+
+
+def test_verifier_fails_closed_and_counts_errors(monkeypatch):
+    monkeypatch.setenv("UPDATES_RETRIEVAL", "1")
+    monkeypatch.setenv("UPDATES_VERIFIER", "1")
+    _install(monkeypatch, {"split": SPLIT, "match": MATCH_OK, "verify": _verify_by_key({
+        "ADP-17": RuntimeError("boom"), "ADP-21": RuntimeError("boom")})})
+    res = _suggest()
+    assert res["updates"] == [] and res["verifier_errors"] == 2
+    assert {x["reason"] for x in res["rejected"]} >= {"verifier unavailable (fail closed)"}
+    assert res["covered_drafts"] == {}       # nothing survived -> no draft is hidden
+
+
+def test_verifier_off_keeps_matcher_output(monkeypatch):
+    monkeypatch.setenv("UPDATES_RETRIEVAL", "1")
+    r = _install(monkeypatch, {"split": SPLIT, "match": MATCH_OK})
+    res = _suggest()
+    assert not [w for w, _ in r.calls if w == "verify"]
+    assert not any(u.get("verified") for u in res["updates"])
+    assert ("ADP-17", "comment") in [(u["issue_key"], u["action"]) for u in res["updates"]]
+
+
+def test_verifier_sees_statement_not_whole_transcript(monkeypatch):
+    monkeypatch.setenv("UPDATES_RETRIEVAL", "1")
+    monkeypatch.setenv("UPDATES_VERIFIER", "1")
+    yes = {"same_work": "yes", "reason": "AI Foundry", "actions": [
+        {"index": i, "justified": "yes"} for i in range(3)]}
+    r = _install(monkeypatch, {"split": SPLIT, "match": MATCH_OK,
+                               "verify": _verify_by_key({"ADP-17": yes, "ADP-21": yes})})
+    _suggest()
+    for w, kw in r.calls:
+        if w == "verify":
+            assert "VERDICT" not in kw["messages"][1]["content"]
+            assert "JIRA_TICKET_DATA (untrusted" in kw["messages"][1]["content"]
