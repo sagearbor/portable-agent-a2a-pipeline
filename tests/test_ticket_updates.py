@@ -373,6 +373,29 @@ def test_prompt_injection_in_ticket_text_is_fenced_and_cannot_pre_tick(monkeypat
     assert jira.writes == []
 
 
+@pytest.mark.parametrize("quote,ok", [
+    ("My Sages AI foundry issues are resolved", True),       # real quote
+    ("my sages ai FOUNDRY issues, are resolved!", True),       # case/punctuation only
+    ("es are resolv", False),                                   # sub-word fragments
+    ("ages AI foundry", False),                                 # starts mid-word
+    ("resolved", False),                                        # 1 word
+    ("are resolved", False),                                    # 2 words
+    ("", False),
+    ("issues are done", False),                                 # not said
+])
+def test_evidence_must_be_whole_word_quote_of_three_plus_words(quote, ok):
+    assert tu.evidence_in_transcript(quote, tu._norm_ws(TRANSCRIPT)) is ok
+
+
+def test_short_fragment_evidence_cannot_back_a_transition(jira):
+    cands = tu.fetch_candidate_issues(["ADP"])
+    body = {"updates": [{"issue_key": "ADP-17", "action": "transition", "payload": "Done",
+                         "evidence": "resolved", "confidence": 0.99}]}
+    out = tu.validate_proposals(body, cands, 0, TRANSCRIPT)
+    assert not out["updates"]
+    assert out["rejected"][0]["reason"] == "state change without a verbatim transcript quote"
+
+
 def test_validate_skips_transition_to_current_status(jira):
     cands = tu.fetch_candidate_issues(["ADP"])
     body = {"updates": [{"issue_key": "ADP-17", "action": "transition", "payload": "In Progress",
