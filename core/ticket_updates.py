@@ -41,7 +41,7 @@ from core.clients.client import (
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
 from core.dcri_llm import llm_action
 from core import status_mapping, update_retrieval, update_verifier
-from core.update_llm import _accepts_temperature
+from core.update_llm import _accepts_temperature, flag_on
 from core.jql import jql_quote, is_issue_key, validate_project_key
 from core.tools.jira_tool import JiraCredentials, _client, _raise_if_unauthorized
 
@@ -649,6 +649,44 @@ def group_by_topic(drafts_count: int, draft_topics: dict, updates: list[dict]) -
 # Orchestration
 # ---------------------------------------------------------------------------
 
+def drop_weak_enabled() -> bool:
+    """Piece D switch: UPDATES_DROP_WEAK (default on; 0 = only flag weak matches)."""
+    return flag_on("UPDATES_DROP_WEAK")
+
+
+def _ticket_text(cand: dict) -> str:
+    return " ".join(str(cand.get(k) or "") for k in ("summary", "parent_summary", "description_excerpt"))
+
+
+def verifier_names_shared_subject(u: dict, cand: dict, item: dict | None) -> bool:
+    """True if the verifier said yes AND its reason names something that is in
+    both the ticket and what was said (a distinctive word shared with each)."""
+    if not u.get("verified"):
+        return False
+    reason = _content_stems(u.get("verifier_reason") or "")
+    said = " ".join([u.get("evidence") or "", u.get("payload") or "",
+                     (item or {}).get("quote") or "", (item or {}).get("summary") or ""])
+    return bool(reason & _content_stems(_ticket_text(cand))) and bool(reason & _content_stems(said))
+
+
+def drop_weak_matches(updates: list[dict], candidates: list[dict],
+                      items: list[dict] | None) -> tuple[list[dict], list[dict]]:
+    """Piece D: remove (not just flag) updates whose quote/text shares no
+    distinctive word with the ticket, unless the verifier said yes with a
+    reason naming the shared subject."""
+    by_key = {c["key"]: c for c in candidates}
+    items_by_id = {it["id"]: it for it in (items or [])}
+    kept, rejected = [], []
+    for u in updates:
+        if u.get("weak_match") and not verifier_names_shared_subject(
+                u, by_key.get(u["issue_key"], {}), items_by_id.get(u.get("item_id"))):
+            rejected.append({"issue_key": u["issue_key"], "action": u["action"],
+                             "reason": "weak match: shares no distinctive word with the ticket"})
+            continue
+        kept.append(u)
+    return kept, rejected
+
+
 def _recompute_covered(result: dict) -> None:
     """Drop covered-draft entries whose issue no longer has a confident update
     (after later pieces removed some)."""
@@ -693,6 +731,9 @@ def suggest_ticket_updates(
         kept, rej, errs = update_verifier.verify_updates(
             result["updates"], candidates, meta.get("items"), _llm_candidate_view)
         result["updates"], result["verifier_errors"] = kept, errs
+        result["rejected"].extend(rej)
+    if drop_weak_enabled():                                          # piece D
+        result["updates"], rej = drop_weak_matches(result["updates"], candidates, meta.get("items"))
         result["rejected"].extend(rej)
     _recompute_covered(result)
     for i, u in enumerate(result["updates"]):
