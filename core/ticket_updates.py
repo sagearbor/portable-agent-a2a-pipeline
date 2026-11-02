@@ -395,6 +395,23 @@ def _norm_ws(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
+MIN_EVIDENCE_WORDS = 3
+
+
+def evidence_in_transcript(evidence: str, transcript_norm: str) -> bool:
+    """
+    True only if *evidence* is a quote of at least MIN_EVIDENCE_WORDS whole
+    words that appears in the transcript on word boundaries.  Both sides are
+    normalised the same way (lower-case, punctuation -> single spaces), so a
+    sub-word fragment ("es" inside "issues") or a 1-2 word snippet ("done")
+    never counts as verified.  *transcript_norm* must come from _norm_ws().
+    """
+    ev = _norm_ws(evidence)
+    if not ev or len(ev.split()) < MIN_EVIDENCE_WORDS:
+        return False
+    return f" {ev} " in f" {transcript_norm} "
+
+
 def _clamp_conf(v) -> float:
     try:
         f = float(v)
@@ -445,7 +462,7 @@ def validate_proposals(
         cand = by_key[key]
         evidence = str(item.get("evidence") or "").strip()[:300]
         conf = _clamp_conf(item.get("confidence"))
-        ev_ok = bool(evidence) and _norm_ws(evidence) in transcript_norm
+        ev_ok = evidence_in_transcript(evidence, transcript_norm)
         if not ev_ok:
             conf = min(conf, 0.5)   # quote not found verbatim -> never default-ticked
             if action in ("transition", "assign"):
