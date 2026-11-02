@@ -2466,6 +2466,7 @@ function updateCardHtml(u, i) {
         </div>
         <div class="upd-preview">${preview}</div>
         ${u.evidence ? `<div class="upd-evidence">Heard: “${escHtml(u.evidence)}”</div>` : ''}
+        ${u.weak_match ? '<div class="upd-meta" style="color:#b9770e;">The quote shares no distinctive words with this ticket — make sure it is the right ticket before ticking.</div>' : ''}
         <div class="upd-meta">${u.evidence_source === 'transcript'
           ? '<span title="The quote above appears word-for-word in your transcript">Based on: transcript</span>'
           : '<span style="color:#b9770e;" title="The quote was NOT found word-for-word in the transcript, so this suggestion rests on the model reading the existing ticket text. Check it before ticking.">Based on: ticket content / inference — check before ticking</span>'}
