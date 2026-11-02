@@ -10,9 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from core import dcri_llm, ticket_updates as tu, update_llm, update_retrieval as ur, update_verifier as uv
+from core import dcri_llm, status_mapping as sm, ticket_updates as tu, update_llm, update_retrieval as ur, update_verifier as uv
 
-ALL_FLAGS = ("UPDATES_RETRIEVAL", "UPDATES_VERIFIER")
+ALL_FLAGS = ("UPDATES_RETRIEVAL", "UPDATES_VERIFIER", "UPDATES_STRICT_STATUS")
 
 TRANSCRIPT = (
     "All for Sage. My Sages AI foundry issues are resolved. I have a new AI doc follow up "
@@ -341,3 +341,123 @@ def test_verifier_sees_statement_not_whole_transcript(monkeypatch):
         if w == "verify":
             assert "VERDICT" not in kw["messages"][1]["content"]
             assert "JIRA_TICKET_DATA (untrusted" in kw["messages"][1]["content"]
+
+
+# ---------------------------------------------------------------------------
+# C. Strict status mapping
+# ---------------------------------------------------------------------------
+
+# The real ADP workflow shape: no status literally named "Done".
+ADP_TRS = TRS
+DONE_ONLY_CANCEL = [t for t in TRS if t["to_status"] != "Closed"]
+WITH_TESTING = TRS + [{"id": "71", "name": "Send to testing", "to_status": "In Testing",
+                       "to_category": "indeterminate"}]
+
+
+@pytest.mark.parametrize("evidence,intent", [
+    ("My Sages AI foundry issues are resolved", "done"),
+    ("my IRB agent is done and in testing", "testing"),       # testing beats done
+    ("still waiting on manuscript feedback from Henry", "hold"),
+    ("we dropped the dashboard idea", "cancel"),
+    ("Im still working on improvements to VERDICT", "progress"),
+    ("I have a new AI doc follow up project", None),
+    ("did MVP and need testing and tickets", None),           # "needs testing" is not "in testing"
+])
+def test_intent_from_what_was_said(evidence, intent):
+    assert sm.intent_of(evidence) == intent
+
+
+@pytest.mark.parametrize("requested,evidence,trs,expect", [
+    # the ADP-17 bug: "Done" requested, no "Done" status -> Closed, never Cancelled
+    ("Done", "My Sages AI foundry issues are resolved", ADP_TRS, "Closed"),
+    ("Cancelled", "My Sages AI foundry issues are resolved", ADP_TRS, "Closed"),
+    # only Cancelled in the done category -> no transition at all
+    ("Done", "My Sages AI foundry issues are resolved", DONE_ONLY_CANCEL, None),
+    # ADP-4 bug: On Hold requested from "done and in testing" -> no Testing status -> none
+    ("On Hold", "my IRB agent is done and in testing", ADP_TRS, None),
+    ("Done", "my IRB agent is done and in testing", ADP_TRS, None),
+    ("On Hold", "my IRB agent is done and in testing", WITH_TESTING, "In Testing"),
+    # On Hold only when the statement says waiting/blocked/paused
+    ("On Hold", "still waiting on manuscript feedback from Henry", ADP_TRS, "On Hold"),
+    ("On Hold", "Im still working on improvements to VERDICT", ADP_TRS, "In Progress"),
+    # Cancelled only when the statement says dropped/cancelled
+    ("Cancelled", "we dropped the dashboard idea", ADP_TRS, "Cancelled"),
+    ("Closed", "we dropped the dashboard idea", ADP_TRS, "Cancelled"),
+    ("Done", "I have a new AI doc follow up project", ADP_TRS, None),
+])
+def test_resolve_strict(requested, evidence, trs, expect):
+    tr, why = sm.resolve_strict(requested, evidence, trs)
+    assert (tr["to_status"] if tr else None) == expect
+    if expect is None:
+        assert why
+
+
+@pytest.mark.parametrize("name", ["Cancelled", "Canceled", "Won't Do", "Rejected", "Duplicate",
+                                  "Abandoned", "Declined"])
+def test_cancel_type_never_chosen_for_done(name):
+    trs = [{"id": "1", "name": name, "to_status": name, "to_category": "done"}]
+    assert sm.resolve_strict("Done", "the work is finished now", trs)[0] is None
+
+
+def test_legacy_resolver_still_picks_cancelled_when_flag_off():
+    """Documents the old bug that UPDATES_STRICT_STATUS=0 brings back."""
+    assert tu.resolve_transition("Done", ADP_TRS)["to_status"] == "Cancelled"
+
+
+def _validate_transition(payload, evidence, trs=ADP_TRS, status="In Progress"):
+    cands = [_cand("ADP-17", FOUNDRY, status=status)]
+    body = {"updates": [{"issue_key": "ADP-17", "action": "transition", "payload": payload,
+                         "evidence": evidence, "confidence": 0.9}]}
+    return tu.validate_proposals(body, cands, 0, TRANSCRIPT, None,
+                                 transitions_fn=lambda k, c: trs, user_fn=_user_fn)
+
+
+def test_validate_strict_on_maps_done_to_closed(monkeypatch):
+    monkeypatch.setenv("UPDATES_STRICT_STATUS", "1")
+    out = _validate_transition("Done", "My Sages AI foundry issues are resolved")
+    u = out["updates"][0]
+    assert (u["before"], u["after"], u["transition_id"]) == ("In Progress", "Closed", "61")
+
+
+def test_validate_strict_on_rejects_on_hold_from_testing(monkeypatch):
+    monkeypatch.setenv("UPDATES_STRICT_STATUS", "1")
+    out = _validate_transition("On Hold", "my IRB agent is done and in testing")
+    assert not out["updates"]
+    assert "comment only" in out["rejected"][0]["reason"]
+
+
+def test_validate_strict_off_reproduces_cancelled(monkeypatch):
+    out = _validate_transition("Done", "My Sages AI foundry issues are resolved")
+    assert out["updates"][0]["after"] == "Cancelled"
+
+
+def _apply_with_adp_workflow(monkeypatch, update):
+    from core.tools.jira_tool import JiraCredentials
+    posts = []
+    raw = {"transitions": [{"id": t["id"], "name": t["name"],
+                            "to": {"name": t["to_status"], "statusCategory": {"key": t["to_category"]}}}
+                           for t in ADP_TRS]}
+    ok = SimpleNamespace(ok=True, status_code=200, text="{}", json=lambda: raw)
+    monkeypatch.setattr(tu.requests, "get", lambda url, **kw: ok)
+    monkeypatch.setattr(tu.requests, "post", lambda url, **kw: (posts.append((url, kw.get("json"))),
+                                                               SimpleNamespace(ok=True, status_code=204))[1])
+    creds = JiraCredentials(base_url="https://example.atlassian.net", email="", api_token="",
+                            project_key="ADP", access_token="t", cloud_id="c")
+    return tu.apply_updates([update], creds, ["ADP"]), posts
+
+
+def test_apply_strict_never_falls_back_to_category(monkeypatch):
+    monkeypatch.setenv("UPDATES_STRICT_STATUS", "1")
+    stale = {"issue_key": "ADP-17", "action": "transition", "payload": "Done",
+             "transition_id": "999", "target_status": "Done"}
+    res, posts = _apply_with_adp_workflow(monkeypatch, stale)
+    assert res[0]["status"] == "failed" and posts == []
+    res, posts = _apply_with_adp_workflow(monkeypatch, dict(stale, target_status="Closed"))
+    assert res[0]["status"] == "applied" and posts[0][1] == {"transition": {"id": "61"}}
+
+
+def test_apply_legacy_category_fallback_when_flag_off(monkeypatch):
+    stale = {"issue_key": "ADP-17", "action": "transition", "payload": "Done",
+             "transition_id": "999", "target_status": "Done"}
+    res, posts = _apply_with_adp_workflow(monkeypatch, stale)
+    assert res[0]["message"] == "Moved to Cancelled"      # the old bug, only with the flag off

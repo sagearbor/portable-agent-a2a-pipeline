@@ -40,7 +40,7 @@ from core.clients.client import (
 )
 from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
 from core.dcri_llm import llm_action
-from core import update_retrieval, update_verifier
+from core import status_mapping, update_retrieval, update_verifier
 from core.update_llm import _accepts_temperature
 from core.jql import jql_quote, is_issue_key, validate_project_key
 from core.tools.jira_tool import JiraCredentials, _client, _raise_if_unauthorized
@@ -520,15 +520,24 @@ def validate_proposals(
                 except Exception as exc:   # noqa: BLE001 - reported, not fatal
                     transitions_cache[key] = []
                     print(f"[ticket_updates] transitions lookup failed for {key}: {type(exc).__name__}")
-            tr = resolve_transition(payload, transitions_cache[key])
-            if not tr:
-                reject(key, action, f"no available transition matches '{payload[:40]}'"); continue
-            if tr["to_status"].lower() == (cand["status"] or "").lower():
-                reject(key, action, "already in that status"); continue
-            ev_norm = f" {_norm_ws(evidence)} "
-            words = _EVIDENCE_WORDS.get(tr["to_category"], ())
-            if not any(f" {_norm_ws(w)} " in ev_norm for w in words):
-                reject(key, action, "evidence does not support that status change"); continue
+            if status_mapping.strict_enabled():                      # piece C
+                # The verbatim quote decides which statuses are allowed; the
+                # model's requested name only picks within that set.
+                tr, why = status_mapping.resolve_strict(payload, evidence, transitions_cache[key])
+                if not tr:
+                    reject(key, action, why); continue
+                if tr["to_status"].lower() == (cand["status"] or "").lower():
+                    reject(key, action, "already in that status"); continue
+            else:
+                tr = resolve_transition(payload, transitions_cache[key])
+                if not tr:
+                    reject(key, action, f"no available transition matches '{payload[:40]}'"); continue
+                if tr["to_status"].lower() == (cand["status"] or "").lower():
+                    reject(key, action, "already in that status"); continue
+                ev_norm = f" {_norm_ws(evidence)} "
+                words = _EVIDENCE_WORDS.get(tr["to_category"], ())
+                if not any(f" {_norm_ws(w)} " in ev_norm for w in words):
+                    reject(key, action, "evidence does not support that status change"); continue
             upd.update(transition_id=tr["id"], target_status=tr["to_status"],
                        before=cand["status"], after=tr["to_status"])
         elif action == "assign":
@@ -758,8 +767,14 @@ def _apply_one(u: dict, credentials) -> str:
                         "to_status": to.get("name", ""),
                         "to_category": (to.get("statusCategory") or {}).get("key", "")})
         want_id = str(u.get("transition_id") or "")
-        tr = next((t for t in trs if want_id and t["id"] == want_id), None) \
-            or resolve_transition(u.get("target_status") or payload, trs)
+        tr = next((t for t in trs if want_id and t["id"] == want_id), None)
+        if not tr and status_mapping.strict_enabled():
+            # Strict: only the exact status the user saw and ticked, never a
+            # category fallback (that is how "Done" became "Cancelled").
+            want = (u.get("target_status") or "").strip().lower()
+            tr = next((t for t in trs if want and t["to_status"].lower() == want), None)
+        elif not tr:
+            tr = resolve_transition(u.get("target_status") or payload, trs)
         if not tr:
             raise UpdateApplyError(
                 f"'{u.get('target_status') or payload}' is not an available transition for you on {key}.")
