@@ -38,9 +38,10 @@ from core.agents.llm_json import parse_llm_json
 from core.clients.client import (
     get_client, token_limit_kwarg, output_token_kwarg, completion_text,
 )
-from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS, ENRICH_MODEL
+from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
 from core.dcri_llm import llm_action
-from core import update_retrieval
+from core import update_retrieval, update_verifier
+from core.update_llm import _accepts_temperature
 from core.jql import jql_quote, is_issue_key, validate_project_key
 from core.tools.jira_tool import JiraCredentials, _client, _raise_if_unauthorized
 
@@ -348,7 +349,8 @@ def propose_updates(transcript: str, candidates: list[dict], drafts: list[dict])
     """One LLM call -> raw (unvalidated) proposal dict.  Raises LLMOutputError on
     truncated/empty output and ValueError on unparseable JSON."""
     client, default_model = get_client()
-    model = ENRICH_MODEL or default_model
+    model = update_verifier.match_model() or default_model      # piece B: stronger model
+    temp = {"temperature": TEMPERATURE} if _accepts_temperature(model) else {}
 
     draft_view = [
         {"index": i, "summary": (d.get("summary") or "")[:200],
@@ -373,14 +375,14 @@ def propose_updates(transcript: str, candidates: list[dict], drafts: list[dict])
         if PROVIDER in ("openai_responses", "azure_responses"):
             response = client.responses.create(
                 model=model, instructions=SYSTEM_PROMPT, input=user_content,
-                temperature=TEMPERATURE, **output_token_kwarg(model, MAX_TOKENS),
+                **temp, **output_token_kwarg(model, MAX_TOKENS),
             )
         else:
             response = client.chat.completions.create(
                 model=model,
                 messages=[{"role": "system", "content": SYSTEM_PROMPT},
                           {"role": "user", "content": user_content}],
-                temperature=TEMPERATURE, **token_limit_kwarg(model, MAX_TOKENS),
+                **temp, **token_limit_kwarg(model, MAX_TOKENS),
             )
     raw = completion_text(response, where="suggest_updates")
     parsed = parse_llm_json(raw, context="suggest_updates")
@@ -677,6 +679,12 @@ def suggest_ticket_updates(
     result = validate_proposals(raw, candidates, len(drafts), transcript, credentials,
                                 transitions_fn=transitions_fn, user_fn=user_fn)
     result["rejected"].extend(meta.get("out_of_list") or [])
+    result["verifier_errors"] = 0
+    if update_verifier.verifier_enabled() and result["updates"]:     # piece B
+        kept, rej, errs = update_verifier.verify_updates(
+            result["updates"], candidates, meta.get("items"), _llm_candidate_view)
+        result["updates"], result["verifier_errors"] = kept, errs
+        result["rejected"].extend(rej)
     _recompute_covered(result)
     for i, u in enumerate(result["updates"]):
         u["id"] = f"u{i}"

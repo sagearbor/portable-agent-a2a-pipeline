@@ -67,6 +67,7 @@ _UPDATE_FIELDS = (
     "payload", "topic", "evidence", "evidence_verified", "evidence_source",
     "confidence", "rationale", "default_checked", "before", "after",
     "transition_id", "target_status", "account_id", "weak_match",
+    "verified", "verifier_reason", "verifier_action_reason",
 )
 
 
@@ -127,6 +128,7 @@ async def suggest_updates(req: SuggestUpdatesRequest, request: Request):
         "topic_groups": result["topic_groups"],
         "candidates_considered": result["candidates_considered"],
         "work_items": result.get("work_items", 0),
+        "verifier_errors": result.get("verifier_errors", 0),
         "work_items_with_candidates": result.get("work_items_with_candidates"),
         "read_as": "user" if creds else "shared",
     }
