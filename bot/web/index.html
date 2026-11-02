@@ -2069,8 +2069,9 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
 
     // Merge proposed updates (also unticks drafts an update already covers).
     showAlert(infoEl, 'Checking existing tickets for updates...');
-    applySuggestions(await updatesPromise);
+    const updData = await updatesPromise;
     hideAlert(infoEl);
+    applySuggestions(updData);   // may show a "sign in for update suggestions" hint
 
     // Auto-calculate dates from anchor if enrichment didn't provide them
     const hasAnyDates = state.draftTickets.some(t => t.start_date || t.due_date);
@@ -2464,8 +2465,11 @@ function updateCardHtml(u, i) {
           — ${escHtml(u.issue_summary || '')}${badge}
         </div>
         <div class="upd-preview">${preview}</div>
-        ${u.evidence ? `<div class="upd-evidence">Heard: “${escHtml(u.evidence)}”${u.evidence_verified ? '' : ' <span title="This quote was not found word-for-word in the transcript">(paraphrased)</span>'}</div>` : ''}
-        <div class="upd-meta">Confidence ${pct}%${u.default_checked ? '' : ' — low, left unticked'}${getGroupMode() === 'write' && u.topic ? ' · Topic: ' + escHtml(u.topic) : ''}${u.rationale ? ' · ' + escHtml(u.rationale) : ''}</div>
+        ${u.evidence ? `<div class="upd-evidence">Heard: “${escHtml(u.evidence)}”</div>` : ''}
+        <div class="upd-meta">${u.evidence_source === 'transcript'
+          ? '<span title="The quote above appears word-for-word in your transcript">Based on: transcript</span>'
+          : '<span style="color:#b9770e;" title="The quote was NOT found word-for-word in the transcript, so this suggestion rests on the model reading the existing ticket text. Check it before ticking.">Based on: ticket content / inference — check before ticking</span>'}
+          · Confidence ${pct}%${u.default_checked ? '' : ((u.action === 'transition' || u.action === 'assign') ? ' — status/assignee changes always start unticked' : ' — left unticked')}${getGroupMode() === 'write' && u.topic ? ' · Topic: ' + escHtml(u.topic) : ''}${u.rationale ? ' · ' + escHtml(u.rationale) : ''}</div>
       </div>
     </div>`;
 }
@@ -2553,10 +2557,11 @@ async function suggestUpdates(transcript) {
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({}));
       dbg(1, '[Updates] suggest failed (non-fatal):', resp.status, extractErrorMsg(err.detail, ''));
+      if (resp.status === 401) state.updatesNeedSignIn = true;
       return null;
     }
     const data = await resp.json();
-    dbg(5, '[Updates] proposals:', (data.updates || []).length, 'rejected:', (data.rejected || []).length,
+    dbg(5, '[Updates] proposals:', (data.updates || []).length, 'rejected:', data.rejected_count || 0,
         'candidates:', data.candidates_considered);
     return data;
   } catch (e) {
@@ -2566,7 +2571,15 @@ async function suggestUpdates(transcript) {
 }
 
 function applySuggestions(data) {
-  if (!data) { state.updates = []; state.topicGroups = []; return; }
+  if (!data) {
+    state.updates = []; state.topicGroups = [];
+    if (state.updatesNeedSignIn) {
+      const el = document.getElementById('analyze-info');
+      if (el) showAlert(el, 'Sign in to Jira (Step 1) to also get suggested updates to existing tickets.');
+    }
+    return;
+  }
+  state.updatesNeedSignIn = false;
   state.updates = (data.updates || []).map(u => ({ ...u, checked: !!u.default_checked, result: null }));
   state.topicGroups = data.topic_groups || [];
   Object.entries(data.covered_drafts || {}).forEach(([idx, key]) => {

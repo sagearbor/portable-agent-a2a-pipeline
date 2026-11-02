@@ -6,14 +6,17 @@ POST /api/v1/apply-updates     writes ONLY the updates the user ticked, as the
                                signed-in user (Atlassian OAuth).  dry_run=true
                                never writes and needs no sign-in.
 
-Reads use the signed-in user's OAuth session when there is one (so their own
-permissions apply and "my issues" can be prioritised); otherwise they fall
-back to the shared read credential, the same way /enrich-drafts does.
-Writes never use the shared credential.
+Both endpoints are OAuth-only: reads use the signed-in user's session so the
+suggestions only ever contain issues THAT user can see.  The shared read
+credential is used only when SUGGEST_UPDATES_ALLOW_SHARED_READ=1 is set
+(local testing only; never set it on a deployed app - it would let anyone who
+can reach the site read issues visible to the shared account).  Writes never
+use the shared credential, flag or not.
 """
 
 import asyncio
 import contextvars
+import os
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -48,7 +51,23 @@ def _project_list(project_key: str, project_keys: list[str] | None) -> list[str]
     out = list(dict.fromkeys(keys))
     if not out:
         raise HTTPException(status_code=400, detail="project_key is required")
+    if len(out) > ticket_updates.MAX_PROJECTS:
+        raise HTTPException(status_code=400,
+                            detail=f"At most {ticket_updates.MAX_PROJECTS} projects per request")
     return out
+
+
+def _shared_read_allowed() -> bool:
+    return os.environ.get("SUGGEST_UPDATES_ALLOW_SHARED_READ", "").strip() == "1"
+
+
+# Fields of each proposed update the UI needs; nothing else is returned.
+_UPDATE_FIELDS = (
+    "id", "issue_key", "issue_summary", "issue_type", "issue_status", "action",
+    "payload", "topic", "evidence", "evidence_verified", "evidence_source",
+    "confidence", "rationale", "default_checked", "before", "after",
+    "transition_id", "target_status", "account_id",
+)
 
 
 class DraftIn(BaseModel):
@@ -72,6 +91,8 @@ async def suggest_updates(req: SuggestUpdatesRequest, request: Request):
     site_base = validate_base_url(req.base_url)
     projects = _project_list(req.project_key, req.project_keys)
     creds = _oauth_credentials(request, projects[0])
+    if creds is None and not _shared_read_allowed():
+        raise HTTPException(status_code=401, detail="Sign in to Jira to get update suggestions.")
 
     loop = asyncio.get_event_loop()
     try:
@@ -92,13 +113,21 @@ async def suggest_updates(req: SuggestUpdatesRequest, request: Request):
             "status": "error", "error_code": "SUGGEST_UPDATES_FAILURE",
             "message": f"{type(exc).__name__}: {exc}"})
 
+    updates = []
     for u in result["updates"]:
-        u["url"] = f"{site_base}/browse/{u['issue_key']}"
-    # JSON object keys must be strings.
-    result["draft_topics"] = {str(k): v for k, v in result["draft_topics"].items()}
-    result["covered_drafts"] = {str(k): v for k, v in result["covered_drafts"].items()}
-    result["read_as"] = "user" if creds else "shared"
-    return result
+        out = {k: u.get(k) for k in _UPDATE_FIELDS if k in u}
+        out["url"] = f"{site_base}/browse/{u['issue_key']}"
+        updates.append(out)
+    return {
+        "updates": updates,
+        "rejected_count": len(result["rejected"]),
+        # JSON object keys must be strings.
+        "draft_topics": {str(k): v for k, v in result["draft_topics"].items()},
+        "covered_drafts": {str(k): v for k, v in result["covered_drafts"].items()},
+        "topic_groups": result["topic_groups"],
+        "candidates_considered": result["candidates_considered"],
+        "read_as": "user" if creds else "shared",
+    }
 
 
 class UpdateIn(BaseModel):
