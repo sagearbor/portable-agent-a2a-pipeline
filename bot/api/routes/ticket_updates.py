@@ -126,6 +126,8 @@ async def suggest_updates(req: SuggestUpdatesRequest, request: Request):
         "covered_drafts": {str(k): v for k, v in result["covered_drafts"].items()},
         "topic_groups": result["topic_groups"],
         "candidates_considered": result["candidates_considered"],
+        "work_items": result.get("work_items", 0),
+        "work_items_with_candidates": result.get("work_items_with_candidates"),
         "read_as": "user" if creds else "shared",
     }
 
