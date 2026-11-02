@@ -13,6 +13,7 @@ Endpoints:
     POST /api/v1/generate-transcript      - LLM-generated demo transcript
     GET  /api/v1/sample-transcript        - download sample transcript file
     GET  /api/v1/jira/context             - project context (epics, sprints, versions)
+    GET  /api/v1/jira/health              - shared Jira credential status (UI banner)
     GET  /                                - web UI (bot/web/index.html)
 
 Phase 2 will add:
@@ -43,6 +44,8 @@ from bot.api.routes.jira_search import router as jira_search_router
 from bot.api.routes.jira_context_api import router as jira_context_api_router
 from bot.api.routes.extract import router as extract_router
 from bot.api.routes.user_prefs_api import router as user_prefs_router
+from bot.api.routes.jira_health import router as jira_health_router
+from core.jira_health import peek_jira_health
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +151,7 @@ app.include_router(jira_context_api_router,  prefix="/api/v1")
 app.include_router(auth_jira_router,         prefix="/api/v1")
 app.include_router(extract_router,           prefix="/api/v1")
 app.include_router(user_prefs_router,        prefix="/api/v1")
+app.include_router(jira_health_router,       prefix="/api/v1")
 
 # Mount SSO auth routes at /api/auth
 app.include_router(auth_router, prefix="/api/auth")
@@ -176,6 +180,10 @@ async def health() -> JSONResponse:
             "version": "0.10.6",
             "provider": PROVIDER,
             "jira_project": os.environ.get("JIRA_PROJECT_KEY") or None,
+            # Last cached shared-credential status (no network call here —
+            # probes hit /health every 10s; a Jira outage must never fail
+            # them).  "unchecked" until /api/v1/jira/health has run once.
+            "jira": (peek_jira_health() or {}).get("status", "unchecked"),
         }
     )
 

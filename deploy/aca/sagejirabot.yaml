@@ -24,6 +24,12 @@
           "server": "<ACR_LOGIN_SERVER>",
           "identity": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/<RESOURCE_GROUP>/providers/Microsoft.ManagedIdentity/userAssignedIdentities/<UAMI_NAME>"
         }
+      ],
+      "secrets": [
+        {
+          "name": "jira-api-token",
+          "value": "<JIRA_API_TOKEN - never commit; set with: az containerapp secret set>"
+        }
       ]
     },
     "template": {
@@ -83,6 +89,22 @@
             {
               "name": "ATLASSIAN_OAUTH_REDIRECT_URI",
               "value": "https://sagejirabot.<ACA_ENV_DEFAULT_DOMAIN>/api/v1/auth/jira/callback"
+            },
+            {
+              "name": "JIRA_BASE_URL",
+              "value": "<JIRA_BASE_URL e.g. https://your-site.atlassian.net>"
+            },
+            {
+              "name": "JIRA_EMAIL",
+              "value": "<EMAIL_OF_JIRA_TOKEN_OWNER>"
+            },
+            {
+              "name": "JIRA_API_TOKEN",
+              "secretRef": "jira-api-token"
+            },
+            {
+              "name": "JIRA_TOKEN_EXPIRES_ON",
+              "value": "<YYYY-MM-DD optional: date the Jira API token expires>"
             }
           ],
           "probes": [

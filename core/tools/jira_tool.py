@@ -149,6 +149,36 @@ def _client(
     return base_url, auth, headers
 
 
+# Message for a 401 on a per-user OAuth call (the shared-credential wording
+# lives in core/jira_health.py so the banner and errors say the same thing).
+OAUTH_EXPIRED_MESSAGE = (
+    "Your Jira sign-in has expired \u2014 please sign in to Jira again and retry."
+)
+
+
+def _raise_if_unauthorized(resp, credentials: "JiraCredentials | None") -> None:
+    """Turn a Jira 401 into a JiraAuthError with a clear, user-facing message.
+
+    Shared credential (env JIRA_EMAIL/JIRA_API_TOKEN) -> the "Jira connection
+    is down" wording, and the cached /api/v1/jira/health result flips to
+    "invalid" so the red banner appears on the next poll.  Per-user OAuth ->
+    "sign in again".  Never includes the response body or any credential.
+    """
+    if resp.status_code != 401:
+        return
+    from core.jira_health import (
+        JiraAuthError, JIRA_DOWN_MESSAGE, mark_shared_credential_rejected,
+    )
+    if credentials is not None and credentials.access_token:
+        raise JiraAuthError(OAUTH_EXPIRED_MESSAGE, shared=False)
+    is_shared = credentials is None or (
+        credentials.api_token == (os.environ.get("JIRA_API_TOKEN") or "")
+    )
+    if is_shared:
+        mark_shared_credential_rejected()
+    raise JiraAuthError(JIRA_DOWN_MESSAGE, shared=is_shared)
+
+
 # ---------------------------------------------------------------------------
 # Permission check (Option B service account guard)
 # ---------------------------------------------------------------------------
@@ -339,6 +369,7 @@ def create_ticket(
                 timeout=15,
             )
 
+    _raise_if_unauthorized(resp, credentials)
     if not resp.ok:
         raise RuntimeError(
             f"Jira API error {resp.status_code}: {resp.text}"
@@ -470,6 +501,7 @@ def create_issue_link(
         timeout=15,
     )
 
+    _raise_if_unauthorized(resp, credentials)
     if not resp.ok:
         raise RuntimeError(
             f"Jira issueLink error {resp.status_code}: {resp.text}"

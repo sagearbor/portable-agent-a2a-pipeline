@@ -1855,6 +1855,7 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
       let errDetail;
       try { errDetail = JSON.parse(rawErr); } catch (_) { errDetail = { detail: rawErr.substring(0, 200) }; }
       const msg = extractErrorMsg(errDetail.detail, `Server error ${resp.status}`);
+      if (window.jiraBanner) window.jiraBanner.refresh();
       throw new Error(msg);
     }
 
@@ -2680,6 +2681,10 @@ document.getElementById('btn-submit').addEventListener('click', async () => {
 
     renderTickets();
 
+    // A failed create may mean the Jira token just died — re-check now so
+    // the red banner appears without waiting for the 10-minute poll.
+    if (failed > 0 && window.jiraBanner) window.jiraBanner.refresh();
+
     // Build success message with epic info
     let successMsg = '';
     if (batchData.epics_created.length > 0) {
@@ -3111,5 +3116,7 @@ function setNotSignedInUI() {
 // When they're not signed in we explicitly show a "Sign in first" state
 // so nobody leaks the service-account's full-org project list.
 </script>
+<!-- Jira connection banner (red bar when the shared Jira token is down) -->
+<script src="jira-banner.js"></script>
 </body>
 </html>

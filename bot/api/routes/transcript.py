@@ -24,6 +24,7 @@ from pydantic import BaseModel
 from bot.api.routes.auth_jira import get_oauth_session
 
 from core.config.settings import PROVIDER
+from core.jira_health import JiraAuthError
 from core.agents import agent1_email, agent2_router, agent3_jira
 from core.adapters.transcript_adapter import transcript_to_pipeline_input
 
@@ -156,7 +157,10 @@ def _run_pipeline_job(job_id: str, req_data: dict):
             "dry_run": dry_run,
             "elapsed_seconds": round(time.time() - start, 2),
             "tickets": [],
-            "error_message": f"{type(exc).__name__}: {exc}",
+            "error_message": (
+                str(exc) if isinstance(exc, JiraAuthError)
+                else f"{type(exc).__name__}: {exc}"
+            ),
         }
     finally:
         if key_overridden:
@@ -402,6 +406,12 @@ async def submit_ticket(req: SubmitTicketRequest, request: Request) -> TicketRes
             priority=result.get("priority", req.priority),
             description=req.description,
         )
+    except JiraAuthError as exc:
+        # 401 from Jira: clear wording instead of a generic failure.
+        raise HTTPException(
+            status_code=503 if exc.shared else 401,
+            detail={"status": "error", "error_code": "JIRA_AUTH_EXPIRED", "message": str(exc)},
+        )
     except RuntimeError as exc:
         raise HTTPException(
             status_code=500,
@@ -480,6 +490,11 @@ async def enrich_drafts(req: EnrichDraftsRequest):
                 "fix_versions": fix_versions,
             },
         }
+    except JiraAuthError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail={"status": "error", "error_code": "JIRA_AUTH_EXPIRED", "message": str(exc)},
+        )
     except Exception as exc:
         raise HTTPException(
             status_code=500,
