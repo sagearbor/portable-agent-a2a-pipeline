@@ -83,6 +83,30 @@
               "value": "gpt-5.4-mini"
             },
             {
+              "name": "UPDATES_RETRIEVAL",
+              "value": "1"
+            },
+            {
+              "name": "UPDATES_VERIFIER",
+              "value": "1"
+            },
+            {
+              "name": "UPDATES_MATCH_MODEL",
+              "value": "gpt-5.5"
+            },
+            {
+              "name": "UPDATES_VERIFY_MODEL",
+              "value": "gpt-5.5"
+            },
+            {
+              "name": "UPDATES_STRICT_STATUS",
+              "value": "1"
+            },
+            {
+              "name": "UPDATES_DROP_WEAK",
+              "value": "1"
+            },
+            {
               "name": "SESSION_COOKIE_SECURE",
               "value": "true"
             },
