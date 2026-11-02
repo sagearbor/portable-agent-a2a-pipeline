@@ -165,6 +165,7 @@ def test_call_json_retries_without_temperature_and_keeps_budget(monkeypatch):
     assert update_llm.call_json("s", "u", model="gpt-5.4-mini", operation="t") == {"ok": True}
     assert "temperature" in calls[0] and "temperature" not in calls[1]
     assert all(c["max_completion_tokens"] >= 40000 for c in calls)
+    assert all(c["timeout"] == 120.0 for c in calls)          # never the 600 s SDK default
 
 
 # ---------------------------------------------------------------------------

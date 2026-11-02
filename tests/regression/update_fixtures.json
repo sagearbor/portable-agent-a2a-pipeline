@@ -1,0 +1,1012 @@
+{
+ "version": 1,
+ "users": {
+  "Sage Arbor": "acct-sage"
+ },
+ "fixtures": [
+  {
+   "name": "adp_base",
+   "note": "Real case: only the AI Foundry story/epic exist. NOTHING on ADP-4; IRB, manuscript, VERDICT, AI-doc MVP stay new drafts.",
+   "candidates": [
+    {
+     "key": "ADP-4",
+     "type": "Story",
+     "summary": "SOP Chatbot",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "RAG chatbot that answers staff questions about DCRI standard operating procedures (SOPs). Next: user testing with the QA group.",
+     "mine": true
+    },
+    {
+     "key": "ADP-17",
+     "type": "Story",
+     "summary": "AI Foundry - get up and running, debug permission issues",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": "ADP-21",
+     "parent_summary": "AI Foundry - get up and running, debug permission issues",
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": "Sage Arbor",
+     "updated": "2026-10-30",
+     "description_excerpt": "Get access to the DCRI AI Foundry project and fix the RBAC permission errors when calling model deployments.",
+     "mine": true
+    },
+    {
+     "key": "ADP-21",
+     "type": "Epic",
+     "summary": "AI Foundry - get up and running, debug permission issues",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": "Mark Darby",
+     "updated": "2026-10-30",
+     "description_excerpt": "",
+     "mine": false
+    },
+    {
+     "key": "ADP-6",
+     "type": "Story",
+     "summary": "Manuscript formatting template for JAMA submissions",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Priya Patel",
+     "assignee_account_id": "acct-priya",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Word template and reference style for JAMA Network manuscripts.",
+     "mine": false
+    },
+    {
+     "key": "ADP-11",
+     "type": "Story",
+     "summary": "De-identify clinical documents before LLM processing",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Mark Darby",
+     "assignee_account_id": "acct-mark",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Remove PHI from clinical documents (notes, letters) before they are sent to an LLM.",
+     "mine": false
+    },
+    {
+     "key": "ADP-12",
+     "type": "Story",
+     "summary": "Quarterly budget report template",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Vincent Lee",
+     "assignee_account_id": "acct-vincent",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "",
+     "mine": false
+    },
+    {
+     "key": "ADP-14",
+     "type": "Story",
+     "summary": "Set up automated testing for the data pipeline",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "pytest + CI for the ingestion jobs.",
+     "mine": false
+    },
+    {
+     "key": "ADP-19",
+     "type": "Story",
+     "summary": "Agent framework evaluation (Semantic Kernel vs LangGraph)",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Mark Darby",
+     "assignee_account_id": "acct-mark",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Compare agent frameworks for internal tools.",
+     "mine": false
+    },
+    {
+     "key": "ADP-23",
+     "type": "Story",
+     "summary": "Rubric for grading protocol deviation reports",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Scoring rubric used by monitors when reviewing deviation reports.",
+     "mine": false
+    }
+   ],
+   "transitions": {
+    "*": [
+     {
+      "id": "11",
+      "name": "To Do",
+      "to_status": "To Do",
+      "to_category": "new"
+     },
+     {
+      "id": "21",
+      "name": "In Progress",
+      "to_status": "In Progress",
+      "to_category": "indeterminate"
+     },
+     {
+      "id": "41",
+      "name": "On Hold",
+      "to_status": "On Hold",
+      "to_category": "indeterminate"
+     },
+     {
+      "id": "51",
+      "name": "Cancel",
+      "to_status": "Cancelled",
+      "to_category": "done"
+     },
+     {
+      "id": "61",
+      "name": "Close",
+      "to_status": "Closed",
+      "to_category": "done"
+     }
+    ]
+   },
+   "transcript": "All for Sage. My Sages AI foundry issues are resolved. I have a new AI doc follow up project i did MVP and need testing and tickets to see if its going anywhere. my IRB agent is done and in testing, still waiting on manuscript feedback from Henry and Vincent (chistoph already redlined). Im still working on improvements to VERDICT LLM-as-a-judge, haveing to fix spiked documents to fit rubric and measure if has rule content vs placement/format.",
+   "drafts": [
+    {
+     "summary": "Close out AI Foundry permission issues",
+     "description": "Sage reports the AI Foundry permission issues are resolved."
+    },
+    {
+     "summary": "Test AI doc follow-up MVP and create tickets",
+     "description": "MVP built; needs testing and tickets to decide whether to continue."
+    },
+    {
+     "summary": "IRB agent: finish testing",
+     "description": "IRB agent is done and in testing."
+    },
+    {
+     "summary": "Get manuscript feedback from Henry and Vincent",
+     "description": "Waiting on feedback; Christoph already redlined."
+    },
+    {
+     "summary": "Improve VERDICT LLM-as-a-judge rubric fit",
+     "description": "Fix spiked documents to fit rubric; measure rule content vs placement/format."
+    }
+   ],
+   "expect": {
+    "allowed_keys": [
+     "ADP-17",
+     "ADP-21"
+    ],
+    "allowed_status": {
+     "ADP-17": [
+      "Closed"
+     ],
+     "ADP-21": [
+      "Closed"
+     ]
+    },
+    "allowed_assign": {
+     "ADP-21": [
+      "Sage Arbor"
+     ]
+    },
+    "must": [
+     {
+      "key": "ADP-17",
+      "action": "comment"
+     },
+     {
+      "key": "ADP-17",
+      "action": "transition",
+      "after": "Closed"
+     }
+    ],
+    "drafts_never_covered": [
+     1,
+     2,
+     3,
+     4
+    ]
+   }
+  },
+  {
+   "name": "adp_irb_present",
+   "note": "An IRB agent ticket exists: it must get the comment; ADP workflow has no Testing status, so no status change on it (On Hold is wrong).",
+   "candidates": [
+    {
+     "key": "ADP-4",
+     "type": "Story",
+     "summary": "SOP Chatbot",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "RAG chatbot that answers staff questions about DCRI standard operating procedures (SOPs). Next: user testing with the QA group.",
+     "mine": true
+    },
+    {
+     "key": "ADP-17",
+     "type": "Story",
+     "summary": "AI Foundry - get up and running, debug permission issues",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": "ADP-21",
+     "parent_summary": "AI Foundry - get up and running, debug permission issues",
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": "Sage Arbor",
+     "updated": "2026-10-30",
+     "description_excerpt": "Get access to the DCRI AI Foundry project and fix the RBAC permission errors when calling model deployments.",
+     "mine": true
+    },
+    {
+     "key": "ADP-21",
+     "type": "Epic",
+     "summary": "AI Foundry - get up and running, debug permission issues",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": "Mark Darby",
+     "updated": "2026-10-30",
+     "description_excerpt": "",
+     "mine": false
+    },
+    {
+     "key": "ADP-6",
+     "type": "Story",
+     "summary": "Manuscript formatting template for JAMA submissions",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Priya Patel",
+     "assignee_account_id": "acct-priya",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Word template and reference style for JAMA Network manuscripts.",
+     "mine": false
+    },
+    {
+     "key": "ADP-11",
+     "type": "Story",
+     "summary": "De-identify clinical documents before LLM processing",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Mark Darby",
+     "assignee_account_id": "acct-mark",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Remove PHI from clinical documents (notes, letters) before they are sent to an LLM.",
+     "mine": false
+    },
+    {
+     "key": "ADP-12",
+     "type": "Story",
+     "summary": "Quarterly budget report template",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Vincent Lee",
+     "assignee_account_id": "acct-vincent",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "",
+     "mine": false
+    },
+    {
+     "key": "ADP-14",
+     "type": "Story",
+     "summary": "Set up automated testing for the data pipeline",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "pytest + CI for the ingestion jobs.",
+     "mine": false
+    },
+    {
+     "key": "ADP-19",
+     "type": "Story",
+     "summary": "Agent framework evaluation (Semantic Kernel vs LangGraph)",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Mark Darby",
+     "assignee_account_id": "acct-mark",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Compare agent frameworks for internal tools.",
+     "mine": false
+    },
+    {
+     "key": "ADP-23",
+     "type": "Story",
+     "summary": "Rubric for grading protocol deviation reports",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Scoring rubric used by monitors when reviewing deviation reports.",
+     "mine": false
+    },
+    {
+     "key": "ADP-25",
+     "type": "Story",
+     "summary": "IRB agent - automated IRB submission pre-review",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": "Sage Arbor",
+     "updated": "2026-10-30",
+     "description_excerpt": "Agent that pre-reviews IRB submissions for missing elements before they go to the board.",
+     "mine": true
+    }
+   ],
+   "transitions": {
+    "*": [
+     {
+      "id": "11",
+      "name": "To Do",
+      "to_status": "To Do",
+      "to_category": "new"
+     },
+     {
+      "id": "21",
+      "name": "In Progress",
+      "to_status": "In Progress",
+      "to_category": "indeterminate"
+     },
+     {
+      "id": "41",
+      "name": "On Hold",
+      "to_status": "On Hold",
+      "to_category": "indeterminate"
+     },
+     {
+      "id": "51",
+      "name": "Cancel",
+      "to_status": "Cancelled",
+      "to_category": "done"
+     },
+     {
+      "id": "61",
+      "name": "Close",
+      "to_status": "Closed",
+      "to_category": "done"
+     }
+    ]
+   },
+   "transcript": "All for Sage. My Sages AI foundry issues are resolved. I have a new AI doc follow up project i did MVP and need testing and tickets to see if its going anywhere. my IRB agent is done and in testing, still waiting on manuscript feedback from Henry and Vincent (chistoph already redlined). Im still working on improvements to VERDICT LLM-as-a-judge, haveing to fix spiked documents to fit rubric and measure if has rule content vs placement/format.",
+   "drafts": [
+    {
+     "summary": "Close out AI Foundry permission issues",
+     "description": "Sage reports the AI Foundry permission issues are resolved."
+    },
+    {
+     "summary": "Test AI doc follow-up MVP and create tickets",
+     "description": "MVP built; needs testing and tickets to decide whether to continue."
+    },
+    {
+     "summary": "IRB agent: finish testing",
+     "description": "IRB agent is done and in testing."
+    },
+    {
+     "summary": "Get manuscript feedback from Henry and Vincent",
+     "description": "Waiting on feedback; Christoph already redlined."
+    },
+    {
+     "summary": "Improve VERDICT LLM-as-a-judge rubric fit",
+     "description": "Fix spiked documents to fit rubric; measure rule content vs placement/format."
+    }
+   ],
+   "expect": {
+    "allowed_keys": [
+     "ADP-17",
+     "ADP-21",
+     "ADP-25"
+    ],
+    "allowed_status": {
+     "ADP-17": [
+      "Closed"
+     ],
+     "ADP-21": [
+      "Closed"
+     ],
+     "ADP-25": []
+    },
+    "allowed_assign": {
+     "ADP-21": [
+      "Sage Arbor"
+     ]
+    },
+    "must": [
+     {
+      "key": "ADP-17",
+      "action": "comment"
+     },
+     {
+      "key": "ADP-17",
+      "action": "transition",
+      "after": "Closed"
+     },
+     {
+      "key": "ADP-25",
+      "action": "comment"
+     }
+    ],
+    "drafts_never_covered": [
+     1,
+     3,
+     4
+    ]
+   }
+  },
+  {
+   "name": "adp_irb_testing_workflow",
+   "note": "IRB ticket exists and the workflow has In Testing: expect In Testing on ADP-25.",
+   "candidates": [
+    {
+     "key": "ADP-4",
+     "type": "Story",
+     "summary": "SOP Chatbot",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "RAG chatbot that answers staff questions about DCRI standard operating procedures (SOPs). Next: user testing with the QA group.",
+     "mine": true
+    },
+    {
+     "key": "ADP-17",
+     "type": "Story",
+     "summary": "AI Foundry - get up and running, debug permission issues",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": "ADP-21",
+     "parent_summary": "AI Foundry - get up and running, debug permission issues",
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": "Sage Arbor",
+     "updated": "2026-10-30",
+     "description_excerpt": "Get access to the DCRI AI Foundry project and fix the RBAC permission errors when calling model deployments.",
+     "mine": true
+    },
+    {
+     "key": "ADP-21",
+     "type": "Epic",
+     "summary": "AI Foundry - get up and running, debug permission issues",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": "Mark Darby",
+     "updated": "2026-10-30",
+     "description_excerpt": "",
+     "mine": false
+    },
+    {
+     "key": "ADP-6",
+     "type": "Story",
+     "summary": "Manuscript formatting template for JAMA submissions",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Priya Patel",
+     "assignee_account_id": "acct-priya",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Word template and reference style for JAMA Network manuscripts.",
+     "mine": false
+    },
+    {
+     "key": "ADP-11",
+     "type": "Story",
+     "summary": "De-identify clinical documents before LLM processing",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Mark Darby",
+     "assignee_account_id": "acct-mark",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Remove PHI from clinical documents (notes, letters) before they are sent to an LLM.",
+     "mine": false
+    },
+    {
+     "key": "ADP-12",
+     "type": "Story",
+     "summary": "Quarterly budget report template",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Vincent Lee",
+     "assignee_account_id": "acct-vincent",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "",
+     "mine": false
+    },
+    {
+     "key": "ADP-14",
+     "type": "Story",
+     "summary": "Set up automated testing for the data pipeline",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "pytest + CI for the ingestion jobs.",
+     "mine": false
+    },
+    {
+     "key": "ADP-19",
+     "type": "Story",
+     "summary": "Agent framework evaluation (Semantic Kernel vs LangGraph)",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Mark Darby",
+     "assignee_account_id": "acct-mark",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Compare agent frameworks for internal tools.",
+     "mine": false
+    },
+    {
+     "key": "ADP-23",
+     "type": "Story",
+     "summary": "Rubric for grading protocol deviation reports",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Scoring rubric used by monitors when reviewing deviation reports.",
+     "mine": false
+    },
+    {
+     "key": "ADP-25",
+     "type": "Story",
+     "summary": "IRB agent - automated IRB submission pre-review",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": "Sage Arbor",
+     "updated": "2026-10-30",
+     "description_excerpt": "Agent that pre-reviews IRB submissions for missing elements before they go to the board.",
+     "mine": true
+    }
+   ],
+   "transitions": {
+    "*": [
+     {
+      "id": "11",
+      "name": "To Do",
+      "to_status": "To Do",
+      "to_category": "new"
+     },
+     {
+      "id": "21",
+      "name": "In Progress",
+      "to_status": "In Progress",
+      "to_category": "indeterminate"
+     },
+     {
+      "id": "41",
+      "name": "On Hold",
+      "to_status": "On Hold",
+      "to_category": "indeterminate"
+     },
+     {
+      "id": "51",
+      "name": "Cancel",
+      "to_status": "Cancelled",
+      "to_category": "done"
+     },
+     {
+      "id": "61",
+      "name": "Close",
+      "to_status": "Closed",
+      "to_category": "done"
+     },
+     {
+      "id": "71",
+      "name": "Send to testing",
+      "to_status": "In Testing",
+      "to_category": "indeterminate"
+     }
+    ]
+   },
+   "transcript": "All for Sage. My Sages AI foundry issues are resolved. I have a new AI doc follow up project i did MVP and need testing and tickets to see if its going anywhere. my IRB agent is done and in testing, still waiting on manuscript feedback from Henry and Vincent (chistoph already redlined). Im still working on improvements to VERDICT LLM-as-a-judge, haveing to fix spiked documents to fit rubric and measure if has rule content vs placement/format.",
+   "drafts": [
+    {
+     "summary": "Close out AI Foundry permission issues",
+     "description": "Sage reports the AI Foundry permission issues are resolved."
+    },
+    {
+     "summary": "Test AI doc follow-up MVP and create tickets",
+     "description": "MVP built; needs testing and tickets to decide whether to continue."
+    },
+    {
+     "summary": "IRB agent: finish testing",
+     "description": "IRB agent is done and in testing."
+    },
+    {
+     "summary": "Get manuscript feedback from Henry and Vincent",
+     "description": "Waiting on feedback; Christoph already redlined."
+    },
+    {
+     "summary": "Improve VERDICT LLM-as-a-judge rubric fit",
+     "description": "Fix spiked documents to fit rubric; measure rule content vs placement/format."
+    }
+   ],
+   "expect": {
+    "allowed_keys": [
+     "ADP-17",
+     "ADP-21",
+     "ADP-25"
+    ],
+    "allowed_status": {
+     "ADP-17": [
+      "Closed"
+     ],
+     "ADP-21": [
+      "Closed"
+     ],
+     "ADP-25": [
+      "In Testing"
+     ]
+    },
+    "allowed_assign": {
+     "ADP-21": [
+      "Sage Arbor"
+     ]
+    },
+    "must": [
+     {
+      "key": "ADP-17",
+      "action": "comment"
+     },
+     {
+      "key": "ADP-17",
+      "action": "transition",
+      "after": "Closed"
+     },
+     {
+      "key": "ADP-25",
+      "action": "comment"
+     },
+     {
+      "key": "ADP-25",
+      "action": "transition",
+      "after": "In Testing"
+     }
+    ],
+    "drafts_never_covered": [
+     1,
+     3,
+     4
+    ]
+   }
+  },
+  {
+   "name": "adp_irb_decoy",
+   "note": "Only an unrelated IRB tracker spreadsheet ticket exists: it must NOT get the IRB agent news.",
+   "candidates": [
+    {
+     "key": "ADP-4",
+     "type": "Story",
+     "summary": "SOP Chatbot",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "RAG chatbot that answers staff questions about DCRI standard operating procedures (SOPs). Next: user testing with the QA group.",
+     "mine": true
+    },
+    {
+     "key": "ADP-17",
+     "type": "Story",
+     "summary": "AI Foundry - get up and running, debug permission issues",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": "ADP-21",
+     "parent_summary": "AI Foundry - get up and running, debug permission issues",
+     "assignee": "Sage Arbor",
+     "assignee_account_id": "acct-sage",
+     "reporter": "Sage Arbor",
+     "updated": "2026-10-30",
+     "description_excerpt": "Get access to the DCRI AI Foundry project and fix the RBAC permission errors when calling model deployments.",
+     "mine": true
+    },
+    {
+     "key": "ADP-21",
+     "type": "Epic",
+     "summary": "AI Foundry - get up and running, debug permission issues",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": "Mark Darby",
+     "updated": "2026-10-30",
+     "description_excerpt": "",
+     "mine": false
+    },
+    {
+     "key": "ADP-6",
+     "type": "Story",
+     "summary": "Manuscript formatting template for JAMA submissions",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Priya Patel",
+     "assignee_account_id": "acct-priya",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Word template and reference style for JAMA Network manuscripts.",
+     "mine": false
+    },
+    {
+     "key": "ADP-11",
+     "type": "Story",
+     "summary": "De-identify clinical documents before LLM processing",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Mark Darby",
+     "assignee_account_id": "acct-mark",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Remove PHI from clinical documents (notes, letters) before they are sent to an LLM.",
+     "mine": false
+    },
+    {
+     "key": "ADP-12",
+     "type": "Story",
+     "summary": "Quarterly budget report template",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Vincent Lee",
+     "assignee_account_id": "acct-vincent",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "",
+     "mine": false
+    },
+    {
+     "key": "ADP-14",
+     "type": "Story",
+     "summary": "Set up automated testing for the data pipeline",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "pytest + CI for the ingestion jobs.",
+     "mine": false
+    },
+    {
+     "key": "ADP-19",
+     "type": "Story",
+     "summary": "Agent framework evaluation (Semantic Kernel vs LangGraph)",
+     "status": "In Progress",
+     "status_category": "indeterminate",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Mark Darby",
+     "assignee_account_id": "acct-mark",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Compare agent frameworks for internal tools.",
+     "mine": false
+    },
+    {
+     "key": "ADP-23",
+     "type": "Story",
+     "summary": "Rubric for grading protocol deviation reports",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": null,
+     "assignee_account_id": null,
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Scoring rubric used by monitors when reviewing deviation reports.",
+     "mine": false
+    },
+    {
+     "key": "ADP-27",
+     "type": "Story",
+     "summary": "IRB submission tracker spreadsheet for Cardiology studies",
+     "status": "To Do",
+     "status_category": "new",
+     "parent_key": null,
+     "parent_summary": null,
+     "assignee": "Priya Patel",
+     "assignee_account_id": "acct-priya",
+     "reporter": null,
+     "updated": "2026-10-30",
+     "description_excerpt": "Shared spreadsheet listing cardiology IRB submissions and approval dates.",
+     "mine": false
+    }
+   ],
+   "transitions": {
+    "*": [
+     {
+      "id": "11",
+      "name": "To Do",
+      "to_status": "To Do",
+      "to_category": "new"
+     },
+     {
+      "id": "21",
+      "name": "In Progress",
+      "to_status": "In Progress",
+      "to_category": "indeterminate"
+     },
+     {
+      "id": "41",
+      "name": "On Hold",
+      "to_status": "On Hold",
+      "to_category": "indeterminate"
+     },
+     {
+      "id": "51",
+      "name": "Cancel",
+      "to_status": "Cancelled",
+      "to_category": "done"
+     },
+     {
+      "id": "61",
+      "name": "Close",
+      "to_status": "Closed",
+      "to_category": "done"
+     }
+    ]
+   },
+   "transcript": "All for Sage. My Sages AI foundry issues are resolved. I have a new AI doc follow up project i did MVP and need testing and tickets to see if its going anywhere. my IRB agent is done and in testing, still waiting on manuscript feedback from Henry and Vincent (chistoph already redlined). Im still working on improvements to VERDICT LLM-as-a-judge, haveing to fix spiked documents to fit rubric and measure if has rule content vs placement/format.",
+   "drafts": [
+    {
+     "summary": "Close out AI Foundry permission issues",
+     "description": "Sage reports the AI Foundry permission issues are resolved."
+    },
+    {
+     "summary": "Test AI doc follow-up MVP and create tickets",
+     "description": "MVP built; needs testing and tickets to decide whether to continue."
+    },
+    {
+     "summary": "IRB agent: finish testing",
+     "description": "IRB agent is done and in testing."
+    },
+    {
+     "summary": "Get manuscript feedback from Henry and Vincent",
+     "description": "Waiting on feedback; Christoph already redlined."
+    },
+    {
+     "summary": "Improve VERDICT LLM-as-a-judge rubric fit",
+     "description": "Fix spiked documents to fit rubric; measure rule content vs placement/format."
+    }
+   ],
+   "expect": {
+    "allowed_keys": [
+     "ADP-17",
+     "ADP-21"
+    ],
+    "allowed_status": {
+     "ADP-17": [
+      "Closed"
+     ],
+     "ADP-21": [
+      "Closed"
+     ]
+    },
+    "allowed_assign": {
+     "ADP-21": [
+      "Sage Arbor"
+     ]
+    },
+    "must": [
+     {
+      "key": "ADP-17",
+      "action": "comment"
+     },
+     {
+      "key": "ADP-17",
+      "action": "transition",
+      "after": "Closed"
+     }
+    ],
+    "drafts_never_covered": [
+     1,
+     2,
+     3,
+     4
+    ]
+   }
+  }
+ ]
+}
