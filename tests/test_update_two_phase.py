@@ -335,3 +335,14 @@ def test_ui_uses_two_phase_flow_and_progress():
     assert "Checking your existing" in html and 'id="updates-pending"' in html
     # prepare starts before the pipeline request
     assert html.index("prepareUpdates(transcript).then") < html.index("/api/v1/process-transcript`, {")
+
+
+def test_reasoning_effort_default_low_and_override(monkeypatch):
+    from core import update_llm
+    monkeypatch.delenv("UPDATES_REASONING_EFFORT", raising=False)
+    assert update_llm.reasoning_effort("gpt-5.5") == {"reasoning_effort": "low"}
+    assert update_llm.reasoning_effort("gpt-4o") == {}          # non-reasoning model
+    monkeypatch.setenv("UPDATES_REASONING_EFFORT", "default")
+    assert update_llm.reasoning_effort("gpt-5.5") == {}
+    monkeypatch.setenv("UPDATES_REASONING_EFFORT", "none")
+    assert update_llm.reasoning_effort("gpt-5.5") == {"reasoning_effort": "none"}
