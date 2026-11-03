@@ -2,6 +2,13 @@
 Suggest / apply updates to EXISTING Jira tickets from a meeting transcript.
 
 POST /api/v1/suggest-updates   read-only: candidates -> LLM -> validated proposals
+POST /api/v1/suggest-updates/prepare
+                               the same, started at Analyze time WITHOUT drafts
+                               (runs in parallel with Agents 1-3); also returns
+                               the work items so drafts can be attached later
+POST /api/v1/suggest-updates/attach-drafts
+                               maps the drafts (once written) to those work
+                               items: topics + covered drafts.  No Jira call.
 POST /api/v1/apply-updates     writes ONLY the updates the user ticked, as the
                                signed-in user (Atlassian OAuth).  dry_run=true
                                never writes and needs no sign-in.
@@ -19,7 +26,7 @@ import contextvars
 import os
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from bot.api.routes.auth_jira import get_oauth_session
 from bot.api.routes._jira_helpers import validate_base_url
@@ -67,8 +74,9 @@ _UPDATE_FIELDS = (
     "payload", "topic", "evidence", "evidence_verified", "evidence_source",
     "confidence", "rationale", "default_checked", "before", "after",
     "transition_id", "target_status", "account_id", "weak_match",
-    "verified", "verifier_reason", "verifier_action_reason",
+    "verified", "verifier_reason", "verifier_action_reason", "item_id",
 )
+_ITEM_FIELDS = ("id", "title", "summary", "status_said")
 
 
 class DraftIn(BaseModel):
@@ -84,22 +92,51 @@ class SuggestUpdatesRequest(BaseModel):
     drafts: list[DraftIn] = []
 
 
+def _require_read_access(request: Request, project_key: str) -> JiraCredentials | None:
+    creds = _oauth_credentials(request, project_key)
+    if creds is None and not _shared_read_allowed():
+        raise HTTPException(status_code=401, detail="Sign in to Jira to get update suggestions.")
+    return creds
+
+
 @router.post("/suggest-updates")
 async def suggest_updates(req: SuggestUpdatesRequest, request: Request):
     """Propose updates to existing open tickets.  Read-only — never writes to Jira."""
+    return await _suggest(req, request, [d.model_dump() for d in req.drafts])
+
+
+class PrepareUpdatesRequest(BaseModel):
+    transcript: str
+    project_key: str
+    project_keys: list[str] | None = None
+    base_url: str = "https://dcri.atlassian.net"
+
+
+@router.post("/suggest-updates/prepare")
+async def prepare_updates(req: PrepareUpdatesRequest, request: Request):
+    """
+    Phase 1 of the two-phase flow, called by the UI the moment the transcript
+    is submitted, in parallel with Agents 1-3: candidate fetch + split (in
+    parallel), match, validate, verify — everything except the drafts, which
+    do not exist yet.  Same read-only / OAuth-only rules and validators as
+    /suggest-updates.  Response = the /suggest-updates shape plus ``items``
+    (the work items, for /suggest-updates/attach-drafts).
+    """
+    return await _suggest(req, request, [])
+
+
+async def _suggest(req, request: Request, drafts: list[dict]):
     if not req.transcript.strip():
         raise HTTPException(status_code=422, detail="transcript must not be empty")
     site_base = validate_base_url(req.base_url)
     projects = _project_list(req.project_key, req.project_keys)
-    creds = _oauth_credentials(request, projects[0])
-    if creds is None and not _shared_read_allowed():
-        raise HTTPException(status_code=401, detail="Sign in to Jira to get update suggestions.")
+    creds = _require_read_access(request, projects[0])
 
     loop = asyncio.get_event_loop()
     try:
         result = await loop.run_in_executor(
             None, contextvars.copy_context().run, ticket_updates.suggest_ticket_updates,
-            req.transcript, projects, [d.model_dump() for d in req.drafts], creds,
+            req.transcript, projects, drafts, creds,
         )
     except JiraAuthError as exc:
         raise HTTPException(
@@ -130,7 +167,62 @@ async def suggest_updates(req: SuggestUpdatesRequest, request: Request):
         "work_items": result.get("work_items", 0),
         "verifier_errors": result.get("verifier_errors", 0),
         "work_items_with_candidates": result.get("work_items_with_candidates"),
+        "items": [{k: it.get(k) for k in _ITEM_FIELDS} for it in result.get("items") or []],
         "read_as": "user" if creds else "shared",
+    }
+
+
+class ItemIn(BaseModel):
+    id: str = Field(max_length=20)
+    title: str = Field("", max_length=200)
+    summary: str = Field("", max_length=600)
+    status_said: str | None = Field(None, max_length=20)
+
+
+class AttachUpdateIn(BaseModel):
+    id: str = Field(max_length=20)
+    issue_key: str = Field(max_length=40)
+    item_id: str | None = Field(None, max_length=20)
+    topic: str | None = Field(None, max_length=200)
+    weak_match: bool = False
+
+
+class AttachDraftsRequest(BaseModel):
+    project_key: str
+    items: list[ItemIn] = Field(default_factory=list, max_length=ticket_updates.update_retrieval.MAX_ITEMS)
+    updates: list[AttachUpdateIn] = Field(default_factory=list, max_length=200)
+    drafts: list[DraftIn] = Field(default_factory=list, max_length=100)
+
+
+@router.post("/suggest-updates/attach-drafts")
+async def attach_drafts(req: AttachDraftsRequest, request: Request):
+    """
+    Phase 2: map the new-ticket drafts onto the work items /prepare returned.
+    Returns ``draft_topics``, ``covered_drafts`` and ``topic_groups`` (same
+    meaning as in /suggest-updates).  Makes no Jira call; only affects how the
+    caller's own results are grouped/ticked.  Same sign-in rule as /prepare
+    (it spends an LLM call).
+    """
+    projects = _project_list(req.project_key, None)
+    _require_read_access(request, projects[0])
+    loop = asyncio.get_event_loop()
+    try:
+        out = await loop.run_in_executor(
+            None, contextvars.copy_context().run, ticket_updates.attach_drafts,
+            [i.model_dump() for i in req.items], [u.model_dump() for u in req.updates],
+            [d.model_dump() for d in req.drafts],
+        )
+    except LLMOutputError as exc:
+        raise HTTPException(status_code=502, detail={
+            "status": "error", "error_code": "LLM_OUTPUT_ERROR", "message": str(exc)})
+    except Exception as exc:   # noqa: BLE001
+        raise HTTPException(status_code=500, detail={
+            "status": "error", "error_code": "ATTACH_DRAFTS_FAILURE",
+            "message": f"{type(exc).__name__}: {exc}"})
+    return {
+        "draft_topics": {str(k): v for k, v in out["draft_topics"].items()},
+        "covered_drafts": {str(k): v for k, v in out["covered_drafts"].items()},
+        "topic_groups": out["topic_groups"],
     }
 
 

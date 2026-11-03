@@ -1008,5 +1008,65 @@
     ]
    }
   }
+ ],
+ "split_cases": [
+  {
+   "name": "sage_status_update",
+   "note": "Real user transcript (2026-11-02). On gpt-5.4-mini the split dropped the finished work that no draft covered (AI Foundry resolved; IRB agent done/in testing): 3 of 5 topics in 3/3 tries. gpt-5.5 found 5/5 in 3/3. The drafts here are the ones Agent 3 wrote for the other three topics.",
+   "transcript": "All for Sage. My Sages AI foundry issues are resolved. I have a new AI doc follow up project i did MVP and need testing and tickets to see if its going anywhere. my IRB agent is done and in testing, still waiting on manuscript feedback from Henry and Vincent (chistoph already redlined). Im still working on improvements to VERDICT LLM-as-a-judge, haveing to fix spiked documents to fit rubric and measure if has rule content vs placement/format.",
+   "drafts": [
+    {
+     "summary": "Test AI doc follow-up MVP",
+     "description": "Test the new AI doc follow-up MVP and decide if it is going anywhere."
+    },
+    {
+     "summary": "Review manuscript feedback",
+     "description": "Collect manuscript feedback from Henry and Vincent; Christoph already redlined."
+    },
+    {
+     "summary": "Improve VERDICT LLM-as-a-judge",
+     "description": "Fix spiked documents to fit rubric; measure rule content vs placement/format."
+    }
+   ],
+   "expect_topics": [
+    {
+     "label": "AI Foundry",
+     "any": [
+      "foundry"
+     ],
+     "required": true
+    },
+    {
+     "label": "IRB agent",
+     "any": [
+      "irb"
+     ],
+     "required": true
+    },
+    {
+     "label": "AI doc follow-up MVP",
+     "any": [
+      "follow up",
+      "follow-up",
+      "mvp"
+     ],
+     "required": false
+    },
+    {
+     "label": "Manuscript feedback",
+     "any": [
+      "manuscript"
+     ],
+     "required": false
+    },
+    {
+     "label": "VERDICT",
+     "any": [
+      "verdict"
+     ],
+     "required": false
+    }
+   ]
+  }
  ]
 }

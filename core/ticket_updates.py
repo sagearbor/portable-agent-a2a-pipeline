@@ -29,8 +29,10 @@ ticket content — counts and lengths only.
 
 from __future__ import annotations
 
+import contextvars
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 import requests
 
@@ -694,6 +696,42 @@ def _recompute_covered(result: dict) -> None:
     result["covered_drafts"] = {i: k for i, k in result["covered_drafts"].items() if k in keys}
 
 
+def _fetch_and_split(transcript: str, project_keys: list[str], drafts: list[dict],
+                     credentials) -> tuple[list[dict], tuple]:
+    """Jira candidate fetch and the work-item split, concurrently (~5 s + ~3 s
+    -> ~5 s).  Errors from either propagate."""
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        f_cands = pool.submit(contextvars.copy_context().run, fetch_candidate_issues,
+                              project_keys, credentials)
+        f_split = pool.submit(contextvars.copy_context().run, update_retrieval.split_work_items,
+                              transcript, drafts, MAX_TRANSCRIPT_CHARS)
+        return f_cands.result(), f_split.result()
+
+
+def attach_drafts(items: list[dict], updates: list[dict], drafts: list[dict]) -> dict:
+    """
+    Second half of the two-phase flow (``POST /suggest-updates/prepare`` ran
+    with no drafts).  Maps each draft to a work item (one small LLM call),
+    then derives the topic of each draft, which drafts an existing-ticket
+    update already covers (only by a non-weak update of the SAME work item),
+    and the topic groups.  Never touches Jira.
+    """
+    draft_items = update_retrieval.map_drafts_to_items(items, drafts)
+    titles = {str(it.get("id")): (str(it.get("title") or "").strip()[:80]) for it in items}
+    draft_topics = {i: titles[iid] for i, iid in draft_items.items() if titles.get(iid)}
+    covered: dict[int, str] = {}
+    for i, iid in draft_items.items():
+        for u in updates:
+            if u.get("item_id") == iid and not u.get("weak_match") and u.get("issue_key"):
+                covered[i] = u["issue_key"]
+                break
+    # An update's topic is its work item's title (as set by propose_with_retrieval).
+    grouped = [{**u, "topic": u.get("topic") or titles.get(str(u.get("item_id"))) or None}
+               for u in updates]
+    return {"draft_topics": draft_topics, "covered_drafts": covered,
+            "topic_groups": group_by_topic(len(drafts), draft_topics, grouped)}
+
+
 def suggest_ticket_updates(
     transcript: str,
     project_keys: list[str],
@@ -710,17 +748,22 @@ def suggest_ticket_updates(
     regression harness supply fixture tickets instead of reading Jira.
     """
     drafts = drafts or []
-    if candidates is None:
+    retrieval = update_retrieval.retrieval_enabled()
+    split = None
+    if candidates is None and retrieval:
+        # The split needs only the transcript: run it while Jira is read.
+        candidates, split = _fetch_and_split(transcript, project_keys, drafts, credentials)
+    elif candidates is None:
         candidates = fetch_candidate_issues(project_keys, credentials)
     if not candidates:
         groups = group_by_topic(len(drafts), {}, [])
         return {"updates": [], "rejected": [], "draft_topics": {}, "covered_drafts": {},
-                "topic_groups": groups, "candidates_considered": 0}
+                "topic_groups": groups, "candidates_considered": 0, "items": []}
 
     meta: dict = {}
-    if update_retrieval.retrieval_enabled():                       # piece A
+    if retrieval:                                                  # piece A
         raw, meta = update_retrieval.propose_with_retrieval(
-            transcript, candidates, drafts, _llm_candidate_view, MAX_TRANSCRIPT_CHARS)
+            transcript, candidates, drafts, _llm_candidate_view, MAX_TRANSCRIPT_CHARS, split=split)
     else:
         raw = propose_updates(transcript, candidates, drafts)
     result = validate_proposals(raw, candidates, len(drafts), transcript, credentials,
@@ -742,6 +785,7 @@ def suggest_ticket_updates(
     result["candidates_considered"] = len(candidates)
     result["work_items"] = len(meta.get("items") or [])
     result["work_items_with_candidates"] = meta.get("items_with_candidates")
+    result["items"] = meta.get("items") or []
     print(f"[ticket_updates] proposed={len(raw.get('updates') or [])} "
           f"valid={len(result['updates'])} rejected={len(result['rejected'])} "
           f"covered_drafts={len(result['covered_drafts'])}")

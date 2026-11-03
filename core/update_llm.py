@@ -59,6 +59,16 @@ def llm_timeout_s() -> float:
     return env_float("UPDATES_LLM_TIMEOUT_S", 120.0)
 
 
+def reasoning_effort(model: str) -> dict:
+    """Thinking level for reasoning models (UPDATES_REASONING_EFFORT, default
+    "low"; "default"/"off" = don't send it).  On the user's transcript gpt-5.5
+    split took 10-26 s at Azure's default level and 6-9 s at low, same topics."""
+    v = (os.environ.get("UPDATES_REASONING_EFFORT") or "low").strip().lower()
+    if v in ("default", "off", "") or _accepts_temperature(model):
+        return {}
+    return {"reasoning_effort": v}
+
+
 def call_json(system: str, user: str, *, model: str | None, operation: str):
     """One LLM call -> parsed JSON (dict or list).  Raises LLMOutputError on
     truncated/empty output and ValueError on unparseable JSON."""
@@ -66,9 +76,13 @@ def call_json(system: str, user: str, *, model: str | None, operation: str):
     model = model or default_model
     temp = {"temperature": settings.TEMPERATURE} if _accepts_temperature(model) else {}
     timeout_kw = {"timeout": llm_timeout_s()}
+    effort = reasoning_effort(model)
 
     def _create(extra):
         if settings.PROVIDER in ("openai_responses", "azure_responses"):
+            if "reasoning_effort" in extra:
+                extra = {k: v for k, v in extra.items() if k != "reasoning_effort"}
+                extra["reasoning"] = {"effort": effort["reasoning_effort"]}
             return client.responses.create(
                 model=model, instructions=system, input=user, **timeout_kw,
                 **extra, **output_token_kwarg(model, settings.MAX_TOKENS))
@@ -80,9 +94,10 @@ def call_json(system: str, user: str, *, model: str | None, operation: str):
 
     with llm_action(operation):
         try:
-            response = _create(temp)
-        except Exception as exc:   # noqa: BLE001 - retry once without temperature
-            if temp and "temperature" in str(exc).lower():
+            response = _create({**temp, **effort})
+        except Exception as exc:   # noqa: BLE001 - retry once without temperature/effort
+            msg = str(exc).lower()
+            if (temp and "temperature" in msg) or (effort and "reasoning" in msg):
                 response = _create({})
             else:
                 raise

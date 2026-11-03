@@ -33,6 +33,8 @@ from core.adapters.transcript_adapter import transcript_to_pipeline_input
 # In-memory job store for async pipeline execution
 # ---------------------------------------------------------------------------
 _jobs: dict[str, dict] = {}
+POLL_S = 0.25        # how often the stream checks the job
+KEEPALIVE_S = 10.0   # whitespace keep-alive interval (NGINX proxy_read_timeout)
 
 
 def _run_pipeline_job(job_id: str, req_data: dict):
@@ -84,12 +86,20 @@ def _run_pipeline_job(job_id: str, req_data: dict):
         directives = agent1_email.get_meeting_directives(email_extracts)
         if directives:
             email_extracts = agent1_email.apply_meeting_directives(email_extracts, directives)
+        # Progress for the UI (only streamed to the requesting browser when it
+        # asks with progress=true; never logged).
+        job["action_items"] = [
+            str(e.get("suggested_jira_summary") or e.get("summary") or "")[:120]
+            for e in email_extracts
+            if isinstance(e, dict) and e.get("is_actionable", True)
+        ][:50]
 
         # Step 3: Agent 2
         job["stage"] = "agent2"
         router_result = agent2_router.run(email_extracts=email_extracts)
         approved_items = router_result["approved"]
         rejected_items = router_result["rejected"]
+        job["approved_count"] = len(approved_items)
 
         # Step 4: Agent 3
         job["stage"] = "agent3"
@@ -187,6 +197,10 @@ class TranscriptRequest(BaseModel):
     jira_email:      str | None = None
     jira_api_token:  str | None = None
     jira_project_key: str | None = None
+    # true: the stream also carries one {"progress": true, ...} JSON line per
+    # stage change (newer UI).  Default false keeps the whitespace-only
+    # keep-alives an older cached UI expects (it JSON.parses the whole body).
+    progress: bool = False
 
 
 class TicketResult(BaseModel):
@@ -279,25 +293,42 @@ async def process_transcript(req: TranscriptRequest):
 
     import json as _json
 
+    want_progress = req.progress
+
     async def _stream():
         """
-        Yield whitespace keep-alive bytes every 10s to prevent NGINX
-        proxy_read_timeout, then the final JSON result.
+        Poll the job every POLL_S (so the result goes out as soon as Agent 3
+        finishes — this used to sleep 10 s between checks, which delayed the
+        result by up to 10 s), yield a whitespace keep-alive every
+        KEEPALIVE_S to beat NGINX proxy_read_timeout, then the final JSON.
 
-        The client receives:  "   \\n   \\n   \\n{...actual JSON...}"
-        JSON.parse() ignores leading whitespace, so the old frontend
-        code (resp.text() → JSON.parse()) works unchanged.
+        Default client view:  "   \\n   \\n{...actual JSON...}" — JSON.parse()
+        ignores the leading whitespace, so the old frontend works unchanged.
+        With progress=true each stage change is also one JSON line
+        ({"progress": true, "stage": ..., "action_items": [...]}); the final
+        line is the result.
         """
-        start = time.time()
+        last_beat = time.time()
+        last_sent = None
         while True:
-            await asyncio.sleep(10)
+            await asyncio.sleep(POLL_S)
             job = _jobs.get(job_id)
             if not job or job["status"] != "running":
                 break
-            # Whitespace keeps the connection alive; JSON.parse ignores it
-            yield " \n"
+            if want_progress:
+                snap = {"progress": True, "stage": job.get("stage"),
+                        "action_items": job.get("action_items"),
+                        "approved_count": job.get("approved_count")}
+                if snap != last_sent:
+                    last_sent = snap
+                    last_beat = time.time()
+                    yield _json.dumps(snap) + "\n"
+                    continue
+            if time.time() - last_beat >= KEEPALIVE_S:
+                last_beat = time.time()
+                yield " \n"
 
-        # Final result — the only actual JSON in the stream
+        # Final result — the only full-shape JSON in the stream
         job = _jobs.pop(job_id, None)
         if job and job["result"]:
             yield _json.dumps(job["result"])
