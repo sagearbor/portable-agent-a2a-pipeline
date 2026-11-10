@@ -15,10 +15,12 @@ said               allowed target
 =================  =========================================================
 dropped/cancelled  a Cancelled / Won't Do / Rejected / Abandoned status
 blocked/on hold/   a status named like On Hold / Blocked / Paused / Waiting
-paused/waiting on
+paused/waiting on/
+delayed
 in testing/review  a status named like Testing / QA / Review / UAT / Verify
 resolved/done/     a done-category status that is NOT cancel-type
-finished/fixed     (prefers Done, Closed, Resolved, Complete)
+finished/fixed/    (prefers Done, Closed, Resolved, Complete)
+"close the ticket"
 started/working on an in-progress status that is not hold/testing-type
 reopen/not started a to-do status
 =================  =========================================================
@@ -49,12 +51,15 @@ _INTENTS = (
                 "abandoned", "abandoning", "scrapped", "wont do", "not doing", "shelved",
                 "killed", "no longer needed", "not going ahead")),
     ("hold", ("blocked", "on hold", "paused", "waiting on", "waiting for", "stalled",
-              "held up", "stuck on")),
+              "held up", "stuck on", "delayed")),
     ("testing", ("in testing", "being tested", "under test", "in qa", "in review",
                  "under review", "being reviewed", "in uat", "ready for testing",
                  "ready for review", "testing it now", "now testing")),
     ("done", ("resolved", "done", "finished", "complete", "completed", "closed", "fixed",
-              "shipped", "wrapped up", "working now", "sorted", "delivered")),
+              "shipped", "wrapped up", "working now", "sorted", "delivered",
+              # status-review phrasing about the ticket itself
+              "close the", "close out", "close it", "close that", "close this", "can close",
+              "ready to close", "mark it done", "mark as done")),
     ("progress", ("working on", "started", "starting", "in progress", "continuing",
                   "underway", "begun", "picked up")),
     ("new", ("reopen", "re open", "reopened", "not started", "back to the backlog")),

@@ -200,6 +200,7 @@ def test_candidate_fetch_and_split_run_in_parallel(monkeypatch):
         time.sleep(0.4)
         return FX["candidates"]
     monkeypatch.setattr(tu, "fetch_candidate_issues", slow_fetch)
+    monkeypatch.setattr(tu, "fetch_topic_candidates", lambda items, keys, creds, existing=None: ([], {}))
     t0 = time.perf_counter()
     res = tu.suggest_ticket_updates(FX["transcript"], ["ADP"], [], None,
                                     transitions_fn=lambda k, c: FX["transitions"]["*"],
@@ -252,13 +253,18 @@ def test_route_prepare_returns_items_and_item_ids(monkeypatch, client):
         seen["auth"] = creds.access_token
         return FX["candidates"]
     monkeypatch.setattr(tu, "fetch_candidate_issues", fetch)
+    monkeypatch.setattr(tu, "fetch_topic_candidates", lambda items, keys, creds, existing=None: ([], {}))
     r = client.post("/api/v1/suggest-updates/prepare", json={
         "transcript": FX["transcript"], "project_key": "ADP", "base_url": "https://example.atlassian.net"})
     assert r.status_code == 200, r.text
     body = r.json()
     assert seen["auth"] == "user-oauth-token" and body["read_as"] == "user"
     assert [i["id"] for i in body["items"]] == ["w1", "w2", "w3", "w4", "w5"]
-    assert set(body["items"][0]) == {"id", "title", "summary", "status_said"}     # no quotes/people
+    # no quotes/people; subject/new_work/matched are labels and ticket keys only
+    assert set(body["items"][0]) == {"id", "title", "subject", "summary", "status_said",
+                                     "new_work", "matched"}
+    assert [m["key"] for m in body["items"][0]["matched"]] == ["ADP-17"]
+    assert body["match_summary"]["candidates_considered"] == len(FX["candidates"])
     assert body["updates"][0]["item_id"] == "w1"
     assert body["updates"][0]["url"] == "https://example.atlassian.net/browse/ADP-17"
 

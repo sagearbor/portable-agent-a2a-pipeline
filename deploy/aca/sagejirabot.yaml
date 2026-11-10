@@ -107,6 +107,10 @@
               "value": "1"
             },
             {
+              "name": "UPDATES_TOPIC_SEARCH",
+              "value": "1"
+            },
+            {
               "name": "SESSION_COOKIE_SECURE",
               "value": "true"
             },

@@ -1308,6 +1308,7 @@
       <div class="section-heading" id="updates-heading">Updates to existing tickets</div>
       <p class="subtitle" id="updates-subtitle">The transcript mentions work that already has an open ticket. Tick the changes you want; low-confidence ones start unticked.</p>
       <div id="updates-pending" class="updates-pending" style="display:none;" aria-live="polite"></div>
+      <div id="updates-summary" class="upd-meta" style="display:none; margin:6px 0 10px;" aria-live="polite"></div>
       <div id="updates-list"></div>
       <div class="submit-bar">
         <label class="dry-run-label" title="Show what would happen without writing anything to Jira">
@@ -1933,6 +1934,7 @@ document.getElementById('btn-analyze').addEventListener('click', async () => {
   const runId = ++state.analyzeRun;
   state.updatesPending = false; state.pendingTopics = [];
   state.updatesNeedSignIn = false;
+  state.updateSummary = null; state.updatesFailed = false;
   const prepPromise = prepareUpdates(transcript).then(d => {
     if (d && runId === state.analyzeRun) {
       state.pendingTopics = (d.items || []).map(it => it.title).filter(Boolean);
@@ -2585,10 +2587,45 @@ function renderUpdatesPending() {
   el.style.display = 'block';
 }
 
+/* One plain sentence with numbers about the existing-ticket check, so "0
+   updates" is never silent: "Checked 21 existing ADP tickets against 16
+   topics from the transcript: 0 matched." */
+function updateSummaryText() {
+  const proj = state.projectKey ? escHtml(state.projectKey) + ' ' : '';
+  if (state.updatesFailed && !state.updates.length) {
+    return 'The check for updates to existing ' + proj + 'tickets failed, so only new tickets are shown. Check Jira for duplicates before creating them.';
+  }
+  const s = state.updateSummary;
+  if (!s) return '';
+  const n = s.candidates_considered || 0, items = s.work_items || 0;
+  const matched = s.items_matched || 0, kept = state.updates.length;
+  let txt = `Checked ${n} existing ${proj}ticket${n !== 1 ? 's' : ''} against ${items} topic${items !== 1 ? 's' : ''} from the transcript: `
+    + `${matched} topic${matched !== 1 ? 's' : ''} matched an existing ticket, ${kept} update${kept !== 1 ? 's' : ''} proposed.`;
+  const dropped = s.rejected || 0;
+  if (dropped) {
+    const why = Object.entries(s.rejected_by_reason || {}).map(([r, c]) => `${c} × ${escHtml(r)}`).join('; ');
+    txt += ` ${dropped} suggestion${dropped !== 1 ? 's were' : ' was'} dropped by safety checks` + (why ? ` (${why})` : '') + '.';
+  }
+  if (s.possible_duplicate_drafts) {
+    txt += ` ${s.possible_duplicate_drafts} new draft${s.possible_duplicate_drafts !== 1 ? 's look' : ' looks'} like a possible duplicate (flagged and unticked above).`;
+  }
+  if (!n) txt = `No open ${proj}tickets were found to compare against, so every topic is drafted as a new ticket.`;
+  return txt;
+}
+
+function renderUpdateSummary() {
+  const el = document.getElementById('updates-summary');
+  const txt = state.updatesPending ? '' : updateSummaryText();
+  el.innerHTML = txt;
+  el.style.display = txt ? 'block' : 'none';
+  return !!txt;
+}
+
 function renderUpdates() {
   const section = document.getElementById('updates-section');
   const list = document.getElementById('updates-list');
   renderUpdatesPending();
+  const hasSummary = renderUpdateSummary();
   if (state.updatesPending && !state.updates.length) {
     section.style.display = 'block';
     document.getElementById('updates-heading').style.display = 'block';
@@ -2598,7 +2635,16 @@ function renderUpdates() {
     updateUpdatesCount();
     return;
   }
-  if (!state.updates.length) { section.style.display = 'none'; list.innerHTML = ''; return; }
+  if (!state.updates.length) {
+    list.innerHTML = '';
+    if (!hasSummary) { section.style.display = 'none'; return; }
+    // Zero updates is a RESULT, not nothing: say what was checked.
+    section.style.display = 'block';
+    document.getElementById('updates-heading').style.display = 'block';
+    document.getElementById('updates-subtitle').textContent = 'No changes to existing tickets are proposed.';
+    updateUpdatesCount();
+    return;
+  }
   section.style.display = 'block';
   const topic = getGroupMode() === 'topic';
   document.getElementById('updates-heading').style.display = topic ? 'none' : 'block';
@@ -2668,6 +2714,7 @@ async function prepareUpdates(transcript) {
       const err = await resp.json().catch(() => ({}));
       dbg(1, '[Updates] prepare failed (non-fatal):', resp.status, extractErrorMsg(err.detail, ''));
       if (resp.status === 401) state.updatesNeedSignIn = true;
+      else state.updatesFailed = true;
       return null;
     }
     const data = await resp.json();
@@ -2676,6 +2723,7 @@ async function prepareUpdates(transcript) {
     return data;
   } catch (e) {
     dbg(1, '[Updates] prepare failed (non-fatal):', e);
+    state.updatesFailed = true;
     return null;
   }
 }
@@ -2701,7 +2749,7 @@ async function attachDrafts(prep) {
     if (!resp.ok) { dbg(1, '[Updates] attach-drafts failed (non-fatal):', resp.status); return prep; }
     const att = await resp.json();
     return { ...prep, draft_topics: att.draft_topics, covered_drafts: att.covered_drafts,
-             topic_groups: att.topic_groups };
+             possible_duplicates: att.possible_duplicates || {}, topic_groups: att.topic_groups };
   } catch (e) {
     dbg(1, '[Updates] attach-drafts failed (non-fatal):', e);
     return prep;
@@ -2730,11 +2778,23 @@ function applySuggestions(data) {
     return;
   }
   state.updatesNeedSignIn = false;
+  state.updateSummary = data.match_summary || null;
   state.updates = (data.updates || []).map(u => ({ ...u, checked: !!u.default_checked, result: null }));
   state.topicGroups = data.topic_groups || [];
   Object.entries(data.covered_drafts || {}).forEach(([idx, key]) => {
     const t = state.draftTickets[parseInt(idx)];
     if (t) { t.covered_by = key; t.checked = false; }
+  });
+  // Drafts whose work the matcher linked to an existing ticket: shown as
+  // "Possible duplicate: ADP-x" (same warning as the summary-search check)
+  // and unticked, never created silently.
+  Object.entries(data.possible_duplicates || {}).forEach(([idx, dups]) => {
+    const t = state.draftTickets[parseInt(idx)];
+    if (!t || t.covered_by || !(dups || []).length) return;
+    const have = new Set((t.duplicate_warning || []).map(d => d.key));
+    const add = dups.filter(d => d && d.key && !have.has(d.key))
+      .map(d => ({ key: d.key, summary: d.summary || '', url: d.url || jiraBrowseUrl(d.key) }));
+    if (add.length) { t.duplicate_warning = (t.duplicate_warning || []).concat(add); t.checked = false; }
   });
 }
 

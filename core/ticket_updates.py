@@ -10,6 +10,11 @@ module:
 1. ``fetch_candidate_issues``  — reads open issues in the selected project(s)
    (the signed-in user's own issues first, then the most recently updated),
    capped in count and in the fields sent to the LLM.
+   ``fetch_topic_candidates`` then adds issues found BY TOPIC once the
+   transcript has been split into work items: a JQL text search on each
+   item's subject/title, the open epics, and the open children of the epics
+   those topics name.  Transcripts never contain ticket keys, so the topic is
+   all there is to find an existing ticket by.
 2. ``propose_updates``         — one LLM call (dcri_llm-instrumented,
    ``llm_action("suggest_updates")``, >= 40000 completion tokens) that returns
    proposed updates, a topic per new draft, and which drafts an update covers.
@@ -44,7 +49,8 @@ from core.config.settings import PROVIDER, TEMPERATURE, MAX_TOKENS
 from core.dcri_llm import llm_action
 from core import status_mapping, update_retrieval, update_verifier
 from core.update_llm import _accepts_temperature, flag_on
-from core.jql import jql_quote, is_issue_key, validate_project_key
+from core.jira_health import JiraAuthError
+from core.jql import jql_quote, jql_text_quote, is_issue_key, validate_project_key
 from core.tools.jira_tool import JiraCredentials, _client, _raise_if_unauthorized
 
 ALLOWED_ACTIONS = ("comment", "transition", "append_description", "assign")
@@ -55,6 +61,12 @@ DESC_EXCERPT_CHARS = 300     # description excerpt per candidate
 MAX_TRANSCRIPT_CHARS = 200_000
 LOW_CONFIDENCE = 0.7         # below this, the UI leaves the checkbox unticked
 MAX_PROJECTS = 5             # project keys per request
+MAX_TOPIC_TERMS = 30         # JQL text terms from the work items
+MAX_TOPIC_RESULTS = 100      # issues from the topic text search
+MAX_EPICS = 50               # open epics
+MAX_EPIC_CHILDREN = 100      # open children of the epics the topics name
+MAX_ALL_CANDIDATES = 250     # hard cap after merging (BM25 picks per item)
+_PAGE = 100                  # /search/jql page size we ask for
 
 # Only these may ever be pre-ticked.  Transitions and assignments change state
 # and are always left for the user to tick explicitly (prompt-injection guard:
@@ -65,7 +77,8 @@ DEFAULT_CHECKABLE = ("comment", "append_description")
 # status category; without them the transition is dropped.
 _EVIDENCE_WORDS = {
     "done": ("resolved", "done", "finished", "complete", "completed", "closed",
-             "fixed", "shipped", "wrapped up", "working now", "sorted"),
+             "fixed", "shipped", "wrapped up", "working now", "sorted",
+             "close the", "close out", "close it", "can close", "ready to close"),
     "indeterminate": ("working on", "started", "starting", "in progress", "testing",
                       "in review", "reviewing", "still", "continuing", "underway", "begun"),
     "new": ("reopen", "re-open", "not started", "back to", "on hold", "paused", "blocked"),
@@ -131,19 +144,31 @@ def _is_oauth(credentials: JiraCredentials | None) -> bool:
 
 
 def _search(jql: str, max_results: int, credentials) -> list[dict]:
+    """POST /search/jql, following ``nextPageToken``: the enhanced search
+    endpoint may return FEWER issues per page than maxResults when large
+    fields (description) are requested, so one page is not "all of them"."""
     base, auth, headers = _client(credentials)
-    resp = requests.post(
-        f"{base}/rest/api/3/search/jql",
-        json={"jql": jql, "fields": _FIELDS, "maxResults": max_results},
-        auth=auth, headers=headers, timeout=20,
-    )
-    _raise_if_unauthorized(resp, credentials)
-    if not resp.ok:
-        raise RuntimeError(f"Jira search failed (HTTP {resp.status_code})")
-    return resp.json().get("issues", [])
+    out: list[dict] = []
+    token = None
+    for _ in range(10):                       # hard stop on a misbehaving cursor
+        body = {"jql": jql, "fields": _FIELDS, "maxResults": min(_PAGE, max_results - len(out))}
+        if token:
+            body["nextPageToken"] = token
+        resp = requests.post(f"{base}/rest/api/3/search/jql", json=body,
+                             auth=auth, headers=headers, timeout=20)
+        _raise_if_unauthorized(resp, credentials)
+        if not resp.ok:
+            raise RuntimeError(f"Jira search failed (HTTP {resp.status_code})")
+        data = resp.json()
+        page = data.get("issues", []) or []
+        out.extend(page)
+        token = data.get("nextPageToken")
+        if not page or not token or data.get("isLast") or len(out) >= max_results:
+            break
+    return out[:max_results]
 
 
-def _normalise_issue(issue: dict, mine: bool) -> dict:
+def _normalise_issue(issue: dict, mine: bool, source: str = "recent") -> dict:
     f = issue.get("fields") or {}
     parent = f.get("parent") or {}
     assignee = f.get("assignee") or {}
@@ -163,6 +188,7 @@ def _normalise_issue(issue: dict, mine: bool) -> dict:
         "updated":             (f.get("updated") or "")[:10],
         "description_excerpt": adf_to_text(f.get("description"))[:DESC_EXCERPT_CHARS],
         "mine":                mine,
+        "source":              "mine" if mine else source,
     }
 
 
@@ -202,6 +228,111 @@ def fetch_candidate_issues(
 
     print(f"[ticket_updates] {len(out)} candidate issues from {len(keys)} project(s)")
     return list(out.values())
+
+
+def topic_search_enabled() -> bool:
+    """UPDATES_TOPIC_SEARCH (default on; 0 = only the recent/mine candidates)."""
+    return flag_on("UPDATES_TOPIC_SEARCH")
+
+
+_TOPIC_STOP = frozenset("""
+meeting status review update updates ticket tickets issue issues work item items project
+projects thing things stuff team new bug bugs task tasks feature features done testing test
+data agent model with from that this have will still into about need needs
+""".split())
+
+
+def topic_terms(items: list[dict]) -> list[str]:
+    """JQL text-search terms from the work items: each item's subject and
+    title as phrases (product names like "Mock Data Generator"), plus the
+    distinctive single words of the subject.  Order-preserving, deduplicated,
+    capped at MAX_TOPIC_TERMS."""
+    out: list[str] = []
+
+    def add(t: str) -> None:
+        t = _norm_ws(t)
+        if t and t not in out and len(out) < MAX_TOPIC_TERMS:
+            out.append(t)
+
+    for it in items:
+        subj, title = it.get("subject") or "", it.get("title") or ""
+        for phrase in (subj, title):
+            words = [w for w in _norm_ws(phrase).split() if w not in _TOPIC_STOP]
+            if words and len(words) <= 5 and any(len(w) >= 3 for w in words):
+                add(" ".join(words))
+        for w in _norm_ws(subj).split():
+            if len(w) >= 4 and w not in _TOPIC_STOP and not w.isdigit():
+                add(w)
+    return out
+
+
+def _related_epic_keys(candidates: list[dict], items: list[dict]) -> list[str]:
+    """Open epics whose summary shares a distinctive word with some work
+    item's subject/title (e.g. the "Mock Data Generator" epic for an item
+    whose subject is "mock data generator")."""
+    item_stems = set()
+    for it in items:
+        item_stems |= _content_stems(f"{it.get('subject') or ''} {it.get('title') or ''}")
+    keys = []
+    for c in candidates:
+        if (c.get("type") or "").lower() == "epic" and is_issue_key(c["key"]) \
+                and _content_stems(c.get("summary") or "") & item_stems:
+            keys.append(c["key"])
+    return keys[:40]
+
+
+def fetch_topic_candidates(
+    items: list[dict],
+    project_keys: list[str],
+    credentials: JiraCredentials | None = None,
+    existing: list[dict] | None = None,
+) -> tuple[list[dict], dict]:
+    """
+    Issues found BY TOPIC for the given work items, minus the *existing*
+    candidates (whose epics still count for step 3).
+    Three read-only searches (open issues only, same projects):
+
+    1. text search: ``text ~ "<term>"`` OR-ed over ``topic_terms(items)``
+    2. open epics (status review talks about products; epics name them)
+    3. open children of the epics whose summary matches an item's topic
+
+    Returns (new candidates, counts per source).  A failed search is skipped
+    (logged by type only) except an auth error, which propagates.
+    """
+    keys = [validate_project_key(k) for k in project_keys if k]
+    projects = ", ".join(jql_quote(k) for k in keys)
+    base_clause = f"project in ({projects}) AND statusCategory != Done"
+    have = {c["key"] for c in existing or []}
+    found: dict[str, dict] = {}
+    counts = {"topic": 0, "epic": 0, "epic_child": 0}
+
+    def run(jql: str, limit: int, source: str) -> None:
+        try:
+            issues = _search(jql, limit, credentials)
+        except JiraAuthError:
+            raise
+        except Exception as exc:   # noqa: BLE001 - topic search is best effort
+            print(f"[ticket_updates] topic search ({source}) failed: {type(exc).__name__}")
+            return
+        for issue in issues:
+            k = issue.get("key")
+            if k and k not in have and k not in found:
+                found[k] = _normalise_issue(issue, mine=False, source=source)
+                counts[source] += 1
+
+    terms = topic_terms(items)
+    if terms:
+        clauses = " OR ".join(f"text ~ {jql_text_quote(t)}" for t in terms)
+        run(f"{base_clause} AND ({clauses}) ORDER BY updated DESC", MAX_TOPIC_RESULTS, "topic")
+    run(f"{base_clause} AND issuetype = Epic ORDER BY updated DESC", MAX_EPICS, "epic")
+
+    epic_keys = _related_epic_keys(list(existing or []) + list(found.values()), items)
+    if epic_keys:
+        run(f"{base_clause} AND parent in ({', '.join(epic_keys)}) ORDER BY updated DESC",
+            MAX_EPIC_CHILDREN, "epic_child")
+    print(f"[ticket_updates] topic search: {len(terms)} terms, +{counts['topic']} by text, "
+          f"+{counts['epic']} epics, +{counts['epic_child']} epic children")
+    return list(found.values()), counts
 
 
 def fetch_transitions(issue_key: str, credentials) -> list[dict]:
@@ -569,7 +700,12 @@ def validate_proposals(
             continue
         seen.add(sig)
         upd["evidence_source"] = "transcript" if ev_ok else "inferred"
-        upd["weak_match"] = not shares_topic_words(cand, evidence, payload if action != "assign" else "")
+        # The work item's subject (e.g. "Mock data generator" for "keep the
+        # ticket open") counts, but only if those words were actually said.
+        subject = _norm_ws(str(item.get("subject") or ""))
+        said_subject = subject if subject and f" {subject} " in f" {transcript_norm} " else ""
+        upd["weak_match"] = not shares_topic_words(
+            cand, f"{evidence} {said_subject}", payload if action != "assign" else "")
         upd["default_checked"] = (action in DEFAULT_CHECKABLE and ev_ok
                                   and conf >= LOW_CONFIDENCE and not upd["weak_match"])
         upd["id"] = f"u{len(updates)}"
@@ -667,7 +803,8 @@ def verifier_names_shared_subject(u: dict, cand: dict, item: dict | None) -> boo
         return False
     reason = _content_stems(u.get("verifier_reason") or "")
     said = " ".join([u.get("evidence") or "", u.get("payload") or "",
-                     (item or {}).get("quote") or "", (item or {}).get("summary") or ""])
+                     (item or {}).get("quote") or "", (item or {}).get("summary") or "",
+                     (item or {}).get("subject") or ""])
     return bool(reason & _content_stems(_ticket_text(cand))) and bool(reason & _content_stems(said))
 
 
@@ -708,13 +845,30 @@ def _fetch_and_split(transcript: str, project_keys: list[str], drafts: list[dict
         return f_cands.result(), f_split.result()
 
 
+def _possible_duplicates(draft_items: dict, item_matched: dict, covered: dict) -> dict[int, list[dict]]:
+    """draft index -> [{key, summary}] for drafts whose work item the matcher
+    linked to an existing ticket, unless the draft is already shown as
+    covered by an update.  The draft is then flagged "possible duplicate of
+    ADP-x" (and unticked) instead of being created silently."""
+    out: dict[int, list[dict]] = {}
+    for i, iid in draft_items.items():
+        if i in covered:
+            continue
+        m = item_matched.get(str(iid)) or []
+        if m:
+            out[i] = [{"key": d["key"], "summary": d.get("summary") or ""} for d in m][:3]
+    return out
+
+
 def attach_drafts(items: list[dict], updates: list[dict], drafts: list[dict]) -> dict:
     """
     Second half of the two-phase flow (``POST /suggest-updates/prepare`` ran
     with no drafts).  Maps each draft to a work item (one small LLM call),
     then derives the topic of each draft, which drafts an existing-ticket
     update already covers (only by a non-weak update of the SAME work item),
-    and the topic groups.  Never touches Jira.
+    which drafts are possible duplicates of a ticket the matcher linked to
+    their work item (``items[].matched`` from /prepare), and the topic
+    groups.  Never touches Jira.
     """
     draft_items = update_retrieval.map_drafts_to_items(items, drafts)
     titles = {str(it.get("id")): (str(it.get("title") or "").strip()[:80]) for it in items}
@@ -725,11 +879,32 @@ def attach_drafts(items: list[dict], updates: list[dict], drafts: list[dict]) ->
             if u.get("item_id") == iid and not u.get("weak_match") and u.get("issue_key"):
                 covered[i] = u["issue_key"]
                 break
+    item_matched = {str(it.get("id")): list(it.get("matched") or []) for it in items}
     # An update's topic is its work item's title (as set by propose_with_retrieval).
     grouped = [{**u, "topic": u.get("topic") or titles.get(str(u.get("item_id"))) or None}
                for u in updates]
     return {"draft_topics": draft_topics, "covered_drafts": covered,
+            "possible_duplicates": _possible_duplicates(draft_items, item_matched, covered),
             "topic_groups": group_by_topic(len(drafts), draft_topics, grouped)}
+
+
+def _reason_bucket(reason: str) -> str:
+    """Rejection reason without any quoted model text (counts only)."""
+    return (reason or "other").split("'")[0].strip().rstrip(":")[:80] or "other"
+
+
+def _item_matches(meta: dict, rejected: list[dict], by_key: dict) -> dict[str, list[dict]]:
+    """item id -> [{key, summary}] the matcher linked, minus pairs the
+    verifier judged "not the same work"."""
+    vetoed = {(r.get("item_id"), r["issue_key"]) for r in rejected
+              if r.get("reason") == "verifier: not the same work"}
+    out: dict[str, list[dict]] = {}
+    for iid, keys in (meta.get("matched") or {}).items():
+        ok = [{"key": k, "summary": (by_key.get(k) or {}).get("summary", "")}
+              for k in keys if (iid, k) not in vetoed and k in by_key]
+        if ok:
+            out[iid] = ok[:5]
+    return out
 
 
 def suggest_ticket_updates(
@@ -745,20 +920,41 @@ def suggest_ticket_updates(
     """Read-only: candidates -> LLM -> validated proposals.  Never writes to Jira.
 
     ``candidates`` / ``transitions_fn`` / ``user_fn`` let the offline
-    regression harness supply fixture tickets instead of reading Jira.
+    regression harness supply fixture tickets instead of reading Jira (no
+    topic search then: the fixture IS the project).
+
+    The result always carries ``match_summary`` (counts only) so the UI can
+    say "checked N existing tickets, 0 matched" instead of silently showing
+    only new tickets.
     """
     drafts = drafts or []
     retrieval = update_retrieval.retrieval_enabled()
     split = None
+    topic_counts: dict = {}
     if candidates is None and retrieval:
         # The split needs only the transcript: run it while Jira is read.
         candidates, split = _fetch_and_split(transcript, project_keys, drafts, credentials)
+        if topic_search_enabled() and split[0]:
+            extra, topic_counts = fetch_topic_candidates(split[0], project_keys, credentials,
+                                                         existing=candidates)
+            candidates = (list(candidates) + extra)[:MAX_ALL_CANDIDATES]
     elif candidates is None:
         candidates = fetch_candidate_issues(project_keys, credentials)
+    by_source: dict[str, int] = {}
+    for c in candidates or []:
+        src = c.get("source") or "recent"
+        by_source[src] = by_source.get(src, 0) + 1
     if not candidates:
         groups = group_by_topic(len(drafts), {}, [])
+        n_items = len(split[0]) if split else 0
         return {"updates": [], "rejected": [], "draft_topics": {}, "covered_drafts": {},
-                "topic_groups": groups, "candidates_considered": 0, "items": []}
+                "possible_duplicates": {}, "topic_groups": groups, "candidates_considered": 0,
+                "items": [{**it, "matched": []} for it in (split[0] if split else [])],
+                "work_items": n_items, "work_items_with_candidates": 0,
+                "match_summary": {"candidates_considered": 0, "candidates_by_source": {},
+                                  "work_items": n_items, "work_items_with_candidates": 0,
+                                  "items_matched": 0, "proposed": 0, "kept": 0,
+                                  "rejected": 0, "rejected_by_reason": {}}}
 
     meta: dict = {}
     if retrieval:                                                  # piece A
@@ -782,13 +978,38 @@ def suggest_ticket_updates(
     for i, u in enumerate(result["updates"]):
         u["id"] = f"u{i}"
     result["topic_groups"] = group_by_topic(len(drafts), result["draft_topics"], result["updates"])
+
+    by_key = {c["key"]: c for c in candidates}
+    item_matched = _item_matches(meta, result["rejected"], by_key)
+    result["possible_duplicates"] = _possible_duplicates(
+        meta.get("draft_items") or {}, item_matched, result["covered_drafts"])
     result["candidates_considered"] = len(candidates)
     result["work_items"] = len(meta.get("items") or [])
     result["work_items_with_candidates"] = meta.get("items_with_candidates")
-    result["items"] = meta.get("items") or []
-    print(f"[ticket_updates] proposed={len(raw.get('updates') or [])} "
-          f"valid={len(result['updates'])} rejected={len(result['rejected'])} "
-          f"covered_drafts={len(result['covered_drafts'])}")
+    result["items"] = [{**it, "matched": item_matched.get(it["id"], [])}
+                       for it in (meta.get("items") or [])]
+    reasons: dict[str, int] = {}
+    for r in result["rejected"]:
+        b = _reason_bucket(r.get("reason", ""))
+        reasons[b] = reasons.get(b, 0) + 1
+    result["match_summary"] = {
+        "candidates_considered": len(candidates),
+        "candidates_by_source": by_source,
+        "topic_search": topic_counts,
+        "work_items": result["work_items"],
+        "work_items_with_candidates": result["work_items_with_candidates"],
+        "items_matched": len(item_matched),
+        "proposed": len(raw.get("updates") or []),
+        "kept": len(result["updates"]),
+        "rejected": len(result["rejected"]),
+        "rejected_by_reason": reasons,
+        "possible_duplicate_drafts": len(result["possible_duplicates"]),
+    }
+    print(f"[ticket_updates] candidates={len(candidates)} {by_source} items={result['work_items']} "
+          f"items_matched={len(item_matched)} proposed={len(raw.get('updates') or [])} "
+          f"valid={len(result['updates'])} rejected={len(result['rejected'])} {reasons} "
+          f"covered_drafts={len(result['covered_drafts'])} "
+          f"possible_duplicates={len(result['possible_duplicates'])}")
     return result
 
 
