@@ -76,7 +76,7 @@ _UPDATE_FIELDS = (
     "transition_id", "target_status", "account_id", "weak_match",
     "verified", "verifier_reason", "verifier_action_reason", "item_id",
 )
-_ITEM_FIELDS = ("id", "title", "summary", "status_said")
+_ITEM_FIELDS = ("id", "title", "subject", "summary", "status_said", "new_work", "matched")
 
 
 class DraftIn(BaseModel):
@@ -162,8 +162,12 @@ async def _suggest(req, request: Request, drafts: list[dict]):
         # JSON object keys must be strings.
         "draft_topics": {str(k): v for k, v in result["draft_topics"].items()},
         "covered_drafts": {str(k): v for k, v in result["covered_drafts"].items()},
+        "possible_duplicates": {str(k): [{**d, "url": f"{site_base}/browse/{d['key']}"} for d in v]
+                                for k, v in (result.get("possible_duplicates") or {}).items()},
         "topic_groups": result["topic_groups"],
         "candidates_considered": result["candidates_considered"],
+        # Counts only: lets the UI say "checked N existing tickets, 0 matched".
+        "match_summary": result.get("match_summary") or {},
         "work_items": result.get("work_items", 0),
         "verifier_errors": result.get("verifier_errors", 0),
         "work_items_with_candidates": result.get("work_items_with_candidates"),
@@ -172,11 +176,20 @@ async def _suggest(req, request: Request, drafts: list[dict]):
     }
 
 
+class MatchedIn(BaseModel):
+    key: str = Field(max_length=40)
+    summary: str = Field("", max_length=300)
+
+
 class ItemIn(BaseModel):
     id: str = Field(max_length=20)
     title: str = Field("", max_length=200)
+    subject: str | None = Field(None, max_length=200)
     summary: str = Field("", max_length=600)
     status_said: str | None = Field(None, max_length=20)
+    new_work: bool | None = None
+    # Tickets /prepare's matcher linked to this item (possible duplicates).
+    matched: list[MatchedIn] = Field(default_factory=list, max_length=5)
 
 
 class AttachUpdateIn(BaseModel):
@@ -198,18 +211,27 @@ class AttachDraftsRequest(BaseModel):
 async def attach_drafts(req: AttachDraftsRequest, request: Request):
     """
     Phase 2: map the new-ticket drafts onto the work items /prepare returned.
-    Returns ``draft_topics``, ``covered_drafts`` and ``topic_groups`` (same
-    meaning as in /suggest-updates).  Makes no Jira call; only affects how the
+    Returns ``draft_topics``, ``covered_drafts``, ``possible_duplicates`` and
+    ``topic_groups`` (same meaning as in /suggest-updates).  Makes no Jira call; only affects how the
     caller's own results are grouped/ticked.  Same sign-in rule as /prepare
     (it spends an LLM call).
     """
     projects = _project_list(req.project_key, None)
     _require_read_access(request, projects[0])
+    items = []
+    for it in req.items:
+        d = it.model_dump()
+        # Only well-formed keys of the selected project survive (they become
+        # "possible duplicate" links in the UI).
+        d["matched"] = [m for m in d["matched"]
+                        if ticket_updates.is_issue_key(m["key"].upper())
+                        and m["key"].upper().rsplit("-", 1)[0] == projects[0]]
+        items.append(d)
     loop = asyncio.get_event_loop()
     try:
         out = await loop.run_in_executor(
             None, contextvars.copy_context().run, ticket_updates.attach_drafts,
-            [i.model_dump() for i in req.items], [u.model_dump() for u in req.updates],
+            items, [u.model_dump() for u in req.updates],
             [d.model_dump() for d in req.drafts],
         )
     except LLMOutputError as exc:
@@ -222,6 +244,7 @@ async def attach_drafts(req: AttachDraftsRequest, request: Request):
     return {
         "draft_topics": {str(k): v for k, v in out["draft_topics"].items()},
         "covered_drafts": {str(k): v for k, v in out["covered_drafts"].items()},
+        "possible_duplicates": {str(k): v for k, v in (out.get("possible_duplicates") or {}).items()},
         "topic_groups": out["topic_groups"],
     }
 
