@@ -45,11 +45,20 @@ def load_fixtures() -> dict:
     return json.loads(FIXTURES.read_text())
 
 
+def changes(result: dict) -> list[dict]:
+    """Every individual change, including those merged into one ticket's row
+    (``also``), each carrying its row's issue_key."""
+    return [{**a, "issue_key": u["issue_key"]}
+            for u in result.get("updates") or [] for a in [u, *(u.get("also") or [])]]
+
+
 def score(result: dict, expect: dict) -> dict:
     """Compare one pipeline result with a fixture's expectations."""
     allowed = set(expect["allowed_keys"])
+    keys = [u["issue_key"] for u in result.get("updates") or []]
+    duplicate_rows = sorted({k for k in keys if keys.count(k) > 1})
     wrong_ticket, wrong_status, wrong_assign = [], [], []
-    for u in result.get("updates") or []:
+    for u in changes(result):
         key, action = u["issue_key"], u["action"]
         if key not in allowed:
             wrong_ticket.append(f"{key}:{action}")
@@ -62,12 +71,12 @@ def score(result: dict, expect: dict) -> dict:
     for m in expect.get("must") or []:
         hit = any(u["issue_key"] == m["key"] and u["action"] == m["action"]
                   and ("after" not in m or u.get("after") == m["after"])
-                  for u in result.get("updates") or [])
+                  for u in changes(result))
         if not hit:
             missed.append(f"{m['key']}:{m['action']}" + (f"->{m['after']}" if "after" in m else ""))
     covered = {int(k) for k in (result.get("covered_drafts") or {})}
     wrong_cover = sorted(covered & set(expect.get("drafts_never_covered") or []))
-    return {"wrong_ticket": wrong_ticket, "wrong_status": wrong_status, "wrong_assign": wrong_assign,
+    return {"duplicate_rows": duplicate_rows, "wrong_ticket": wrong_ticket, "wrong_status": wrong_status, "wrong_assign": wrong_assign,
             "wrong_cover": wrong_cover, "missed": missed,
             "expected": len(expect.get("must") or []),
             "found": len(expect.get("must") or []) - len(missed)}

@@ -132,7 +132,8 @@ def test_original_bad_suggestions_are_all_removed(monkeypatch):
                                     user_fn=lambda k, n, c: None)
     s = reg.score(res, fx["expect"])
     assert s["wrong_ticket"] == [] and s["wrong_status"] == [] and s["wrong_cover"] == []
+    assert s["duplicate_rows"] == []                                # one row per ticket
     # "Cancelled" requested for resolved work -> strict mapping gives Closed
     assert s["missed"] == []
-    t = next(u for u in res["updates"] if u["action"] == "transition")
+    t = next(u for u in reg.changes(res) if u["action"] == "transition")
     assert (t["issue_key"], t["after"]) == ("ADP-17", "Closed")

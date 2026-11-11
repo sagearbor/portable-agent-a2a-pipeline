@@ -2490,6 +2490,16 @@ function updateCardHtml(u, i) {
   } else {
     preview = `Append to description:<blockquote>${escHtml(u.payload)}</blockquote>`;
   }
+  // A merged row: every other change for the SAME ticket, applied together.
+  for (const a of (u.also || [])) {
+    if (a.action === 'transition' || a.action === 'assign') {
+      const what = a.action === 'transition' ? 'Status' : 'Assignee';
+      preview += `<div>${what}: <span class="before">${escHtml(a.before || '—')}</span><span class="arrow">&rarr;</span><span class="after">${escHtml(a.after || a.payload)}</span></div>`;
+    } else {
+      const lbl = a.action === 'comment' ? 'New comment' : 'Append to description';
+      preview += `${lbl}:<blockquote>${escHtml(a.payload)}</blockquote>`;
+    }
+  }
   let badge = '';
   if (u.result) {
     const cls = u.result.status === 'applied' ? 'badge-created'
@@ -2818,6 +2828,7 @@ document.getElementById('btn-apply-updates').addEventListener('click', async () 
           id: u.id, issue_key: u.issue_key, action: u.action, payload: u.payload,
           transition_id: u.transition_id || null, target_status: u.target_status || null,
           account_id: u.account_id || null, after: u.after || null,
+          also: u.also || null,
         })),
       }),
     });

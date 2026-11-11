@@ -258,6 +258,7 @@ class UpdateIn(BaseModel):
     target_status: str | None = None
     account_id: str | None = None
     after: str | None = None
+    also: list[dict] | None = None   # further changes to the SAME ticket (merged row)
 
 
 class ApplyUpdatesRequest(BaseModel):
