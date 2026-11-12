@@ -315,17 +315,22 @@ def test_live_signature_recent_only_candidates_give_zero_updates(monkeypatch, ji
 def test_status_review_yields_comment_and_close_transition(monkeypatch, jira):
     _install(monkeypatch, _bodies())
     res = tu.suggest_ticket_updates(TRANSCRIPT, ["ADP"], [], OAUTH)
-    got = {(u["issue_key"], u["action"]): u for u in res["updates"]}
+    keys = [u["issue_key"] for u in res["updates"]]
+    assert len(keys) == len(set(keys)), "one row per ticket"
+    got = {(u["issue_key"], a["action"]): a
+           for u in res["updates"] for a in [u, *(u.get("also") or [])]}
     # "close the deploy and verify ticket" -> Done (strict mapping); it was
-    # rejected as "evidence does not state a status change" before.
+    # rejected as "evidence does not state a status change" before.  Its
+    # comment rides on the same ADP-31 row.
     assert got[("ADP-31", "transition")]["after"] == "Done"
     assert ("ADP-31", "comment") in got and ("ADP-41", "comment") in got
     assert ("ADP-52", "comment") in got
     # "keep the ticket open" is not a status change.
     assert ("ADP-41", "transition") not in got
     # The new-bug item never updates an existing ticket.
-    assert not any(u.get("item_id") == "w3" for u in res["updates"])
-    assert res["match_summary"]["kept"] == len(res["updates"]) >= 4
+    assert not any(u.get("item_id") == "w3" or "w3" in (u.get("item_ids") or [])
+                   for u in res["updates"])
+    assert res["match_summary"]["kept"] == len(res["updates"]) >= 3
 
 
 def test_matcher_prompt_no_longer_biased_to_none():
@@ -412,7 +417,8 @@ def test_two_phase_prepare_then_attach_flags_duplicate(monkeypatch, client, jira
         "transcript": TRANSCRIPT, "project_key": "ADP", "base_url": "https://example.atlassian.net"})
     assert r.status_code == 200, r.text
     prep = r.json()
-    assert len(prep["updates"]) >= 4
+    keys = [u["issue_key"] for u in prep["updates"]]
+    assert len(keys) == len(set(keys)) >= 3          # one row per ticket
     items = {it["id"]: it for it in prep["items"]}
     assert [m["key"] for m in items["w3"]["matched"]] == ["ADP-41"]
     # A forged key from another project is dropped by attach-drafts.

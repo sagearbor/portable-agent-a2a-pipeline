@@ -826,6 +826,97 @@ def drop_weak_matches(updates: list[dict], candidates: list[dict],
     return kept, rejected
 
 
+# ---------------------------------------------------------------------------
+# One row per ticket
+# ---------------------------------------------------------------------------
+
+# "Update the AI Foundry permissions ticket with the current status." is an
+# instruction to the bot, not something worth posting on the ticket.
+_META_INSTRUCTION = re.compile(
+    r"^\s*(please\s+)?(update|comment\s+on|add\s+(a\s+)?(comment|note|update)\s+(to|on)|"
+    r"post\s+(a\s+)?(comment|note|update)\s+(to|on)|note\s+on)\b"
+    r".{0,120}\b(ticket|tickets|issue|issues|epic|story|jira)\b", re.I)
+_STATE_PRIORITY = {"transition": 0, "assign": 1}
+
+
+def is_meta_instruction(payload: str) -> bool:
+    """True for a comment that only tells someone to update a ticket."""
+    p = (payload or "").strip()
+    return bool(p) and len(p.split()) <= 25 and bool(_META_INSTRUCTION.match(p))
+
+
+def merge_per_issue(updates: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Collapse all proposals for one issue into ONE row.
+
+    * comment / append_description texts become one comment (distinct texts
+      joined; instruction-only texts like "update the ticket with this
+      status" are dropped);
+    * at most one status change and one assignee change per issue (highest
+      confidence wins); the row's main action is the status change, then the
+      assignment, then the comment, and the rest ride along in ``also``;
+    * a merged row is pre-ticked only if every part of it would be.
+    Different issues (an epic and its stories/subtasks) keep their own rows.
+    Returns (rows, rejected).
+    """
+    rejected: list[dict] = []
+    groups: dict[str, list[dict]] = {}
+    for u in updates:
+        if u["action"] in ("comment", "append_description") and is_meta_instruction(u.get("payload", "")):
+            rejected.append({"issue_key": u["issue_key"], "action": u["action"],
+                             "item_id": u.get("item_id"),
+                             "reason": "comment only restates an instruction"})
+            continue
+        groups.setdefault(u["issue_key"], []).append(u)
+
+    rows: list[dict] = []
+    for key, us in groups.items():
+        if len(us) == 1:
+            rows.append(us[0]); continue
+        by_conf = sorted(us, key=lambda x: -x.get("confidence", 0))
+        state: dict[str, dict] = {}
+        texts: list[dict] = []
+        for u in by_conf:
+            if u["action"] in _STATE_PRIORITY:
+                if u["action"] in state:
+                    rejected.append({"issue_key": key, "action": u["action"], "item_id": u.get("item_id"),
+                                     "reason": "merged: one update per ticket"})
+                else:
+                    state[u["action"]] = u
+            else:
+                texts.append(u)
+        text_row = None
+        if texts:
+            kept: list[str] = []
+            for u in texts:
+                t = u["payload"].strip()
+                n = _norm_ws(t)
+                if any(n in _norm_ws(k) for k in kept):
+                    continue
+                kept = [k for k in kept if _norm_ws(k) not in n] + [t]
+            text_row = {**texts[0],
+                        "action": "comment" if any(u["action"] == "comment" for u in texts)
+                        else "append_description",
+                        "payload": "\n\n".join(kept)[:4000]}
+            text_row["after"] = text_row["payload"]
+            text_row["default_checked"] = all(u.get("default_checked") for u in texts)
+        parts = sorted(state.values(), key=lambda x: _STATE_PRIORITY[x["action"]])
+        if text_row:
+            parts.append(text_row)
+        main = dict(parts[0])
+        main["also"] = [{k: p.get(k) for k in ("action", "payload", "transition_id", "target_status",
+                                               "account_id", "before", "after")}
+                        for p in parts[1:]]
+        if not main["also"]:
+            del main["also"]
+        main["confidence"] = max(u.get("confidence", 0) for u in us)
+        main["weak_match"] = all(u.get("weak_match") for u in us)
+        main["default_checked"] = all(p.get("default_checked") for p in parts)
+        main["item_ids"] = sorted({u["item_id"] for u in us if u.get("item_id")})
+        main["merged_from"] = len(us)
+        rows.append(main)
+    return rows, rejected
+
+
 def _recompute_covered(result: dict) -> None:
     """Drop covered-draft entries whose issue no longer has a confident update
     (after later pieces removed some)."""
@@ -876,7 +967,8 @@ def attach_drafts(items: list[dict], updates: list[dict], drafts: list[dict]) ->
     covered: dict[int, str] = {}
     for i, iid in draft_items.items():
         for u in updates:
-            if u.get("item_id") == iid and not u.get("weak_match") and u.get("issue_key"):
+            if (u.get("item_id") == iid or iid in (u.get("item_ids") or [])) \
+                    and not u.get("weak_match") and u.get("issue_key"):
                 covered[i] = u["issue_key"]
                 break
     item_matched = {str(it.get("id")): list(it.get("matched") or []) for it in items}
@@ -974,6 +1066,8 @@ def suggest_ticket_updates(
     if drop_weak_enabled():                                          # piece D
         result["updates"], rej = drop_weak_matches(result["updates"], candidates, meta.get("items"))
         result["rejected"].extend(rej)
+    result["updates"], rej = merge_per_issue(result["updates"])
+    result["rejected"].extend(rej)
     _recompute_covered(result)
     for i, u in enumerate(result["updates"]):
         u["id"] = f"u{i}"
@@ -1149,11 +1243,20 @@ def apply_updates(
         if dry_run:
             results.append({**res, "status": "dry_run", "message": "Dry run - nothing written."})
             continue
+        also = [a for a in (u.get("also") or []) if isinstance(a, dict)]
+        if any(str(a.get("action") or "").strip().lower() not in ALLOWED_ACTIONS for a in also):
+            results.append({**res, "status": "failed", "message": "Unknown action in merged update."})
+            continue
+        msgs: list[str] = []
         try:
-            msg = _apply_one({**u, "issue_key": key, "action": action}, credentials)
-            results.append({**res, "status": "applied", "message": msg})
+            msgs.append(_apply_one({**u, "issue_key": key, "action": action}, credentials))
+            for a in also:   # same ticket, applied in order after the main change
+                msgs.append(_apply_one({**a, "issue_key": key,
+                                        "action": str(a["action"]).strip().lower()}, credentials))
+            results.append({**res, "status": "applied", "message": "; ".join(msgs)})
         except Exception as exc:   # noqa: BLE001 - reported per update
-            results.append({**res, "status": "failed", "message": str(exc)[:300]})
+            done = f" (already done: {'; '.join(msgs)})" if msgs else ""
+            results.append({**res, "status": "failed", "message": (str(exc) + done)[:300]})
     ok = sum(1 for r in results if r["status"] == "applied")
     print(f"[ticket_updates] apply: {ok}/{len(results)} applied (dry_run={dry_run})")
     return results

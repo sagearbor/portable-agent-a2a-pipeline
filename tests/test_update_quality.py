@@ -327,7 +327,8 @@ def test_verifier_off_keeps_matcher_output(monkeypatch):
     res = _suggest()
     assert not [w for w, _ in r.calls if w == "verify"]
     assert not any(u.get("verified") for u in res["updates"])
-    assert ("ADP-17", "comment") in [(u["issue_key"], u["action"]) for u in res["updates"]]
+    assert ("ADP-17", "comment") in [(u["issue_key"], a["action"]) for u in res["updates"]
+                                     for a in [u, *(u.get("also") or [])]]
 
 
 def test_verifier_sees_statement_not_whole_transcript(monkeypatch):
